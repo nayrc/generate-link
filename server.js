@@ -11,12 +11,21 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Storage: Upstash Redis (production) or JSON file (local dev)
+async function upstash(command) {
+  const res = await fetch(process.env.UPSTASH_REDIS_REST_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(command),
+  });
+  return res.json();
+}
+
 async function loadLinks() {
   if (process.env.UPSTASH_REDIS_REST_URL) {
-    const res = await fetch(`${process.env.UPSTASH_REDIS_REST_URL}/get/links`, {
-      headers: { Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` },
-    });
-    const data = await res.json();
+    const data = await upstash(['GET', 'links']);
     return data.result ? JSON.parse(data.result) : {};
   }
   if (!fs.existsSync(DATA_FILE)) return {};
@@ -25,14 +34,7 @@ async function loadLinks() {
 
 async function saveLinks(links) {
   if (process.env.UPSTASH_REDIS_REST_URL) {
-    await fetch(`${process.env.UPSTASH_REDIS_REST_URL}/set/links`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(JSON.stringify(links)),
-    });
+    await upstash(['SET', 'links', JSON.stringify(links)]);
     return;
   }
   fs.writeFileSync(DATA_FILE, JSON.stringify(links, null, 2));
