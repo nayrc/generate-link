@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LinkSingkat — Generator Shortlink</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f0f13;
+      --surface: #1a1a24;
+      --surface2: #22222f;
+      --border: #2e2e3e;
+      --accent: #6c63ff;
+      --accent-hover: #5a52e0;
+      --accent-light: rgba(108, 99, 255, 0.12);
+      --text: #e8e8f0;
+      --muted: #8888a0;
+      --success: #22c55e;
+      --danger: #ef4444;
+      --radius: 12px;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 16px 80px;
+    }
+
+    /* --- Header --- */
+    header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    .logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .logo-icon {
+      width: 40px; height: 40px;
+      background: var(--accent);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px;
+    }
+
+    h1 { font-size: 1.8rem; font-weight: 700; letter-spacing: -0.5px; }
+    header p { color: var(--muted); margin-top: 6px; font-size: 0.95rem; }
+
+    /* --- Card --- */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      width: 100%;
+      max-width: 600px;
+      margin-bottom: 24px;
+    }
+
+    .card-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+
+    /* --- Form --- */
+    .field { margin-bottom: 14px; }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    input[type="text"], input[type="url"] {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.95rem;
+      padding: 12px 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input:focus { border-color: var(--accent); }
+    input::placeholder { color: var(--muted); }
+
+    .btn {
+      width: 100%;
+      padding: 13px;
+      background: var(--accent);
+      color: #fff;
+      font-family: inherit;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+      margin-top: 4px;
+    }
+
+    .btn:hover { background: var(--accent-hover); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* --- Result box --- */
+    #result-box {
+      display: none;
+      margin-top: 16px;
+      background: var(--accent-light);
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+
+    .result-label { font-size: 0.78rem; color: var(--accent); font-weight: 600; margin-bottom: 6px; }
+
+    .result-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .result-url {
+      flex: 1;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text);
+      word-break: break-all;
+    }
+
+    .copy-btn {
+      flex-shrink: 0;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 7px 14px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.2s;
+      white-space: nowrap;
+    }
+
+    .copy-btn:hover { background: var(--accent-hover); }
+
+    /* --- Error --- */
+    .error-msg {
+      display: none;
+      margin-top: 12px;
+      background: rgba(239,68,68,0.1);
+      border: 1px solid var(--danger);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 0.85rem;
+      color: var(--danger);
+    }
+
+    /* --- Links table --- */
+    #links-section { width: 100%; max-width: 600px; }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .section-header h2 { font-size: 1rem; font-weight: 600; }
+
+    .badge {
+      background: var(--accent-light);
+      color: var(--accent);
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 2px 10px;
+      border-radius: 99px;
+    }
+
+    #links-list { display: flex; flex-direction: column; gap: 10px; }
+
+    .link-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      animation: fadeIn 0.25s ease;
+    }
+
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
+    .link-icon {
+      width: 36px; height: 36px; flex-shrink: 0;
+      background: var(--accent-light);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px;
+    }
+
+    .link-info { flex: 1; min-width: 0; }
+
+    .link-code {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 2px;
+      word-break: break-all;
+    }
+
+    .link-original {
+      font-size: 0.78rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+
+    .link-meta {
+      font-size: 0.73rem;
+      color: var(--muted);
+      margin-top: 4px;
+      display: flex;
+      gap: 12px;
+    }
+
+    .link-meta span { display: flex; align-items: center; gap: 3px; }
+
+    .link-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .icon-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 13px;
+      padding: 5px 10px;
+      font-family: inherit;
+      font-size: 0.78rem;
+      font-weight: 500;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .icon-btn.del:hover { border-color: var(--danger); color: var(--danger); }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .empty-state .big { font-size: 2rem; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">🔗</div>
+    <h1>LinkSingkat</h1>
+  </div>
+  <p>Persingkat URL panjang menjadi link yang mudah dibagikan</p>
+</header>
+
+<!-- Form Card -->
+<div class="card">
+  <div class="card-title">Buat Shortlink Baru</div>
+
+  <form id="shorten-form">
+    <div class="field">
+      <label for="url-input">URL Asli</label>
+      <input type="url" id="url-input" placeholder="https://contoh.com/halaman/sangat/panjang" required />
+    </div>
+    <div class="field">
+      <label for="alias-input">Alias Kustom <span style="color:var(--muted);font-weight:400">(opsional)</span></label>
+      <input type="text" id="alias-input" placeholder="contoh: promo-2024" maxlength="30" />
+    </div>
+    <button type="submit" class="btn" id="submit-btn">Persingkat URL</button>
+  </form>
+
+  <div class="error-msg" id="error-msg"></div>
+
+  <div id="result-box">
+    <div class="result-label">✓ Shortlink berhasil dibuat</div>
+    <div class="result-row">
+      <span class="result-url" id="result-url"></span>
+      <button class="copy-btn" id="copy-btn">Salin</button>
+    </div>
+  </div>
+</div>
+
+<!-- Links List -->
+<div id="links-section">
+  <div class="section-header">
+    <h2>Semua Link</h2>
+    <span class="badge" id="count-badge">0</span>
+  </div>
+  <div id="links-list">
+    <div class="empty-state">
+      <div class="big">🔗</div>
+      Belum ada link. Buat shortlink pertamamu!
+    </div>
+  </div>
+</div>
+
+<script>
+  const form = document.getElementById('shorten-form');
+  const urlInput = document.getElementById('url-input');
+  const aliasInput = document.getElementById('alias-input');
+  const submitBtn = document.getElementById('submit-btn');
+  const errorMsg = document.getElementById('error-msg');
+  const resultBox = document.getElementById('result-box');
+  const resultUrl = document.getElementById('result-url');
+  const copyBtn = document.getElementById('copy-btn');
+  const linksList = document.getElementById('links-list');
+  const countBadge = document.getElementById('count-badge');
+
+  let currentShortUrl = '';
+
+  async function loadLinks() {
+    const res = await fetch('/api/links');
+    const links = await res.json();
+    countBadge.textContent = links.length;
+    if (links.length === 0) {
+      linksList.innerHTML = `<div class="empty-state"><div class="big">🔗</div>Belum ada link. Buat shortlink pertamamu!</div>`;
+      return;
+    }
+    linksList.innerHTML = links.map(link => {
+      const date = new Date(link.createdAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+      const shortUrl = `${location.origin}/${link.code}`;
+      return `
+        <div class="link-item" id="item-${link.code}">
+          <div class="link-icon">🔗</div>
+          <div class="link-info">
+            <div class="link-code"><a href="${shortUrl}" target="_blank" style="color:inherit;text-decoration:none;">${shortUrl}</a></div>
+            <div class="link-original" title="${link.url}">${link.url}</div>
+            <div class="link-meta">
+              <span>📅 ${date}</span>
+              <span>👆 ${link.clicks} klik</span>
+            </div>
+          </div>
+          <div class="link-actions">
+            <button class="icon-btn" onclick="copyLink('${shortUrl}', this)">Salin</button>
+            <button class="icon-btn del" onclick="deleteLink('${link.code}')">Hapus</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function showError(msg) {
+    errorMsg.textContent = msg;
+    errorMsg.style.display = 'block';
+    resultBox.style.display = 'none';
+  }
+
+  function clearMessages() {
+    errorMsg.style.display = 'none';
+    resultBox.style.display = 'none';
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearMessages();
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Memproses...';
+
+    try {
+      const res = await fetch('/api/links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: urlInput.value, alias: aliasInput.value || undefined }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        showError(data.error);
+      } else {
+        currentShortUrl = data.shortUrl;
+        resultUrl.textContent = data.shortUrl;
+        resultBox.style.display = 'block';
+        copyBtn.textContent = 'Salin';
+        urlInput.value = '';
+        aliasInput.value = '';
+        await loadLinks();
+      }
+    } catch {
+      showError('Terjadi kesalahan. Coba lagi.');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Persingkat URL';
+    }
+  });
+
+  copyBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(currentShortUrl).then(() => {
+      copyBtn.textContent = '✓ Tersalin!';
+      setTimeout(() => { copyBtn.textContent = 'Salin'; }, 2000);
+    });
+  });
+
+  async function copyLink(url, btn) {
+    await navigator.clipboard.writeText(url);
+    const orig = btn.textContent;
+    btn.textContent = '✓ Tersalin!';
+    setTimeout(() => { btn.textContent = orig; }, 2000);
+  }
+
+  async function deleteLink(code) {
+    if (!confirm(`Hapus link "/${code}"?`)) return;
+    const res = await fetch(`/api/links/${code}`, { method: 'DELETE' });
+    if (res.ok) {
+      const item = document.getElementById(`item-${code}`);
+      item.style.opacity = '0';
+      item.style.transition = 'opacity 0.2s';
+      setTimeout(() => loadLinks(), 200);
+    }
+  }
+
+  loadLinks();
+</script>
+
+</body>
+</html>

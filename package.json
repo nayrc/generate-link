@@ -1,0 +1,14 @@
+{
+  "name": "generate-link",
+  "version": "1.0.0",
+  "description": "Shortlink generator web app",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "nanoid": "^3.3.7"
+  }
+}
