@@ -218,14 +218,24 @@ $('gpx').addEventListener('change', async e => {
   const f = e.target.files[0]; if (!f) return;
   try {
     track = parseGPX(await f.text());
-    addLayers();
+    await ensureLayers();
     map.fitBounds(trackBounds(), { padding: 60, pitch: 0, bearing: 0, duration: 1500 });
     $('preview').disabled = $('record').disabled = false;
     status(`${f.name}: ${track.coords.length} titik, ${track.total.toFixed(2)} km`);
   } catch (err) { status('Gagal membaca GPX: ' + err.message); }
 });
 
-$('style').addEventListener('change', e => map.setStyle(buildStyle(e.target.value)));
+$('style').addEventListener('change', e => map.setStyle(buildStyle(e.target.value), { diff: false }));
+
+// make sure the route sources/layers exist (style may have been swapped or still loading)
+async function ensureLayers() {
+  if (!map.isStyleLoaded()) await new Promise(r => { const f = () => map.isStyleLoaded() ? r() : setTimeout(f, 50); f(); });
+  if (!map.getSource('done')) {
+    for (const id of ['head', 'done', 'done-glow', 'full']) if (map.getLayer(id)) map.removeLayer(id);
+    for (const id of ['full', 'done', 'head']) if (map.getSource(id)) map.removeSource(id);
+  }
+  addLayers();
+}
 
 // ---------- camera plan (deterministic, precomputed per frame) ----------
 const easeInOut = t => t < .5 ? 4*t*t*t : 1 - (-2*t+2)**3/2;
@@ -348,6 +358,7 @@ function setBusy(b) {
 $('preview').addEventListener('click', async () => {
   if (running || !track) return;
   setBusy(true);
+  await ensureLayers();
   const fps = 30, frames = buildPlan(fps);
   status('Preview… (video hasil Generate akan lebih mulus & tajam)');
   await new Promise(resolve => {
@@ -459,6 +470,7 @@ $('record').addEventListener('click', async () => {
   encoder.configure(enc.cfg);
 
   try {
+    await ensureLayers();
     const frames = buildPlan(fps);
     const started = performance.now();
     for (let i = 0; i < frames.length; i++) {
