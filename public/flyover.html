@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPX Flyover</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --text:#e8eaf0; --muted:#9aa1b2; --accent:#fc4c02; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:14px 16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; }
+  header a { color:var(--muted); font-size:14px; }
+  .controls { display:flex; flex-wrap:wrap; gap:10px; padding:0 16px 12px; align-items:center; }
+  .controls label { font-size:13px; color:var(--muted); display:flex; gap:6px; align-items:center; }
+  select, input[type=number] { background:var(--panel); color:var(--text); border:1px solid #2a2f3a; border-radius:6px; padding:6px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:8px 14px; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.secondary { background:#2a2f3a; }
+  .file { background:var(--panel); border:1px dashed #3a4050; padding:8px 12px; border-radius:6px; cursor:pointer; font-size:14px; }
+  .file input { display:none; }
+  #wrap { position:relative; width:100%; max-width:1280px; margin:0 auto; aspect-ratio:16/9; background:#000; }
+  #map { position:absolute; inset:0; }
+  #stats { position:absolute; left:12px; bottom:12px; background:rgba(0,0,0,.6); padding:8px 12px; border-radius:8px; font-size:14px; pointer-events:none; display:none; }
+  #stats b { font-size:20px; display:block; }
+  #status { padding:8px 16px; color:var(--muted); font-size:13px; min-height:20px; }
+  #download { display:none; padding:0 16px 24px; }
+  #download video { max-width:100%; width:640px; display:block; margin-bottom:8px; }
+  #download a { color:var(--accent); font-weight:600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛰️ GPX Flyover</h1>
+  <a href="/">← Shortlink</a>
+</header>
+<div class="controls">
+  <label class="file">📂 Upload GPX<input type="file" id="gpx" accept=".gpx,application/gpx+xml"></label>
+  <label>Durasi (detik) <input type="number" id="duration" value="20" min="5" max="120" style="width:64px"></label>
+  <label>Gaya peta
+    <select id="style">
+      <option value="satellite">Satelit</option>
+      <option value="streets">Jalan (OSM)</option>
+    </select>
+  </label>
+  <label>Pitch <input type="number" id="pitch" value="60" min="0" max="85" style="width:56px"></label>
+  <button id="preview" class="secondary" disabled>▶ Preview</button>
+  <button id="record" disabled>⏺ Generate Video</button>
+</div>
+<div id="status">Upload file .gpx untuk memulai.</div>
+<div id="wrap">
+  <div id="map"></div>
+  <div id="stats"><b id="sDist">0.00 km</b><span id="sElev">0 m</span> · <span id="sTime">00:00</span></div>
+</div>
+<div id="download"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const status = t => $('status').textContent = t;
+
+const STYLES = {
+  satellite: { type:'raster', tileSize:256, maxzoom:19,
+    tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+    attribution:'Imagery © Esri' },
+  streets: { type:'raster', tileSize:256, maxzoom:19,
+    tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+    attribution:'© OpenStreetMap contributors' }
+};
+
+function buildStyle(kind) {
+  return {
+    version: 8,
+    sources: {
+      base: STYLES[kind],
+      dem: { type:'raster-dem', encoding:'terrarium', tileSize:256, maxzoom:14,
+        tiles:['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'] }
+    },
+    layers: [
+      { id:'sky', type:'background', paint:{ 'background-color':'#87b6e0' } },
+      { id:'base', type:'raster', source:'base' }
+    ],
+    terrain: { source:'dem', exaggeration:1.4 }
+  };
+}
+
+const map = new maplibregl.Map({
+  container: 'map', style: buildStyle('satellite'),
+  center: [106.8, -6.2], zoom: 4, pitch: 0,
+  canvasContextAttributes: { preserveDrawingBuffer: true },
+  preserveDrawingBuffer: true, attributionControl: { compact: true }
+});
+
+let track = null; // {coords:[[lon,lat,ele,time]], cum:[km], total}
+
+// ---------- GPX parsing ----------
+function haversine(a, b) {
+  const R = 6371, r = Math.PI / 180;
+  const dLat = (b[1]-a[1])*r, dLon = (b[0]-a[0])*r;
+  const h = Math.sin(dLat/2)**2 + Math.cos(a[1]*r)*Math.cos(b[1]*r)*Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function parseGPX(text) {
+  const xml = new DOMParser().parseFromString(text, 'application/xml');
+  let pts = [...xml.getElementsByTagName('trkpt')];
+  if (!pts.length) pts = [...xml.getElementsByTagName('rtept')];
+  if (!pts.length) throw new Error('Tidak ada titik track di file GPX');
+  const coords = pts.map(p => {
+    const ele = p.getElementsByTagName('ele')[0];
+    const tm = p.getElementsByTagName('time')[0];
+    return [+p.getAttribute('lon'), +p.getAttribute('lat'),
+            ele ? +ele.textContent : 0, tm ? Date.parse(tm.textContent) : null];
+  }).filter(c => isFinite(c[0]) && isFinite(c[1]));
+  const cum = [0];
+  for (let i = 1; i < coords.length; i++) cum.push(cum[i-1] + haversine(coords[i-1], coords[i]));
+  return { coords, cum, total: cum[cum.length-1] };
+}
+
+// position at distance d (km), with linear interpolation
+function pointAt(d) {
+  const { coords, cum } = track;
+  let lo = 0, hi = cum.length - 1;
+  while (lo < hi - 1) { const m = (lo+hi) >> 1; if (cum[m] <= d) lo = m; else hi = m; }
+  const seg = cum[hi] - cum[lo] || 1, t = Math.min(1, Math.max(0, (d - cum[lo]) / seg));
+  const a = coords[lo], b = coords[hi];
+  return { idx: lo, lon: a[0]+(b[0]-a[0])*t, lat: a[1]+(b[1]-a[1])*t, ele: a[2]+(b[2]-a[2])*t,
+           time: a[3] != null && b[3] != null ? a[3]+(b[3]-a[3])*t : null };
+}
+
+function bearing(a, b) {
+  const r = Math.PI/180;
+  const y = Math.sin((b.lon-a.lon)*r)*Math.cos(b.lat*r);
+  const x = Math.cos(a.lat*r)*Math.sin(b.lat*r) - Math.sin(a.lat*r)*Math.cos(b.lat*r)*Math.cos((b.lon-a.lon)*r);
+  return (Math.atan2(y, x) / r + 360) % 360;
+}
+
+// ---------- map layers ----------
+function addLayers() {
+  if (!track) return;
+  const line = { type:'Feature', geometry:{ type:'LineString', coordinates: track.coords.map(c => [c[0], c[1]]) } };
+  if (map.getSource('full')) {
+    map.getSource('full').setData(line);
+  } else {
+    map.addSource('full', { type:'geojson', data: line });
+    map.addSource('done', { type:'geojson', data: { type:'FeatureCollection', features:[] } });
+    map.addSource('head', { type:'geojson', data: { type:'FeatureCollection', features:[] } });
+    map.addLayer({ id:'full', type:'line', source:'full', paint:{ 'line-color':'#ffffff', 'line-width':3, 'line-opacity':.55 }, layout:{ 'line-cap':'round', 'line-join':'round' } });
+    map.addLayer({ id:'done-glow', type:'line', source:'done', paint:{ 'line-color':'#fc4c02', 'line-width':10, 'line-opacity':.35, 'line-blur':4 } });
+    map.addLayer({ id:'done', type:'line', source:'done', paint:{ 'line-color':'#fc4c02', 'line-width':5 }, layout:{ 'line-cap':'round', 'line-join':'round' } });
+    map.addLayer({ id:'head', type:'circle', source:'head', paint:{ 'circle-radius':8, 'circle-color':'#fc4c02', 'circle-stroke-color':'#fff', 'circle-stroke-width':3 } });
+  }
+}
+map.on('style.load', addLayers);
+
+function fitTrack(animate = true) {
+  const b = new maplibregl.LngLatBounds();
+  track.coords.forEach(c => b.extend([c[0], c[1]]));
+  map.fitBounds(b, { padding: 60, pitch: 0, bearing: 0, duration: animate ? 1500 : 0 });
+}
+
+$('gpx').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    track = parseGPX(await f.text());
+    addLayers(); fitTrack();
+    $('preview').disabled = $('record').disabled = false;
+    status(`${f.name}: ${track.coords.length} titik, ${track.total.toFixed(2)} km`);
+  } catch (err) { status('Gagal membaca GPX: ' + err.message); }
+});
+
+$('style').addEventListener('change', e => map.setStyle(buildStyle(e.target.value)));
+
+// ---------- animation ----------
+const fmtTime = ms => { const s = Math.floor(ms/1000), h = Math.floor(s/3600), m = Math.floor(s/60)%60, ss = s%60;
+  return (h ? h + ':' : '') + String(m).padStart(2,'0') + ':' + String(ss).padStart(2,'0'); };
+const ease = t => t < .5 ? 2*t*t : 1 - (-2*t+2)**2/2;
+
+let running = false;
+const withTimeout = (pr, ms) => Promise.race([pr, new Promise(r => setTimeout(r, ms))]);
+function waitIdle(ms = 8000) { return withTimeout(new Promise(r => map.loaded() && map.areTilesLoaded() ? r() : map.once('idle', r)), ms); }
+const waitMoveEnd = ms => withTimeout(new Promise(r => map.once('moveend', r)), ms);
+
+async function fly() {
+  running = true;
+  $('preview').disabled = $('record').disabled = true;
+  const dur = Math.max(5, +$('duration').value) * 1000;
+  const pitch = +$('pitch').value;
+  const zoom = Math.max(12.5, Math.min(16, 15.5 - Math.log2(Math.max(track.total, 1)) * 0.35));
+  const t0 = track.coords[0][3];
+  const lookAhead = Math.max(0.05, track.total * 0.02);
+  $('stats').style.display = 'block';
+
+  // intro: zoom from overview to start
+  const start = pointAt(0);
+  const initBearing = bearing(start, pointAt(lookAhead));
+  map.getSource('done').setData({ type:'FeatureCollection', features:[] });
+  map.getSource('head').setData({ type:'Point', coordinates:[start.lon, start.lat] });
+  map.flyTo({ center:[start.lon, start.lat], zoom, pitch, bearing: initBearing, duration: 2500, essential: true });
+  await waitMoveEnd(4000);
+  await waitIdle();
+
+  let camBearing = initBearing;
+  await new Promise(resolve => {
+    const begin = performance.now();
+    function frame(now) {
+      const p = Math.min(1, (now - begin) / dur);
+      const d = ease(p) * track.total;
+      const cur = pointAt(d);
+      const ahead = pointAt(Math.min(track.total, d + lookAhead));
+      // smooth bearing
+      let target = bearing(cur, ahead), diff = ((target - camBearing + 540) % 360) - 180;
+      if (d + lookAhead < track.total) camBearing = (camBearing + diff * 0.04 + 360) % 360;
+
+      const done = track.coords.slice(0, cur.idx + 1).map(c => [c[0], c[1]]);
+      done.push([cur.lon, cur.lat]);
+      map.getSource('done').setData({ type:'Feature', geometry:{ type:'LineString', coordinates: done } });
+      map.getSource('head').setData({ type:'Point', coordinates:[cur.lon, cur.lat] });
+      map.jumpTo({ center:[cur.lon, cur.lat], bearing: camBearing, pitch, zoom });
+
+      $('sDist').textContent = d.toFixed(2) + ' km';
+      $('sElev').textContent = Math.round(cur.ele) + ' m';
+      $('sTime').textContent = cur.time != null && t0 != null ? fmtTime(cur.time - t0) : '--:--';
+      if (p < 1) requestAnimationFrame(frame); else resolve();
+    }
+    requestAnimationFrame(frame);
+  });
+
+  // outro: pull back to whole route
+  const b = new maplibregl.LngLatBounds();
+  track.coords.forEach(c => b.extend([c[0], c[1]]));
+  map.fitBounds(b, { padding: 60, pitch: 45, bearing: camBearing, duration: 3000 });
+  await waitMoveEnd(4500);
+  await new Promise(r => setTimeout(r, 1200));
+  running = false;
+  $('preview').disabled = $('record').disabled = false;
+}
+
+// ---------- recording ----------
+// Draw map canvas + stats overlay onto an offscreen canvas so the overlay is in the video
+function startRecorder() {
+  const src = map.getCanvas();
+  const out = document.createElement('canvas');
+  out.width = 1280; out.height = 720;
+  const ctx = out.getContext('2d');
+  let raf;
+  (function draw() {
+    ctx.drawImage(src, 0, 0, out.width, out.height);
+    if ($('stats').style.display !== 'none') {
+      ctx.fillStyle = 'rgba(0,0,0,.6)';
+      ctx.beginPath(); ctx.roundRect(20, out.height - 100, 260, 80, 12); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 30px system-ui';
+      ctx.fillText($('sDist').textContent, 36, out.height - 60);
+      ctx.font = '20px system-ui';
+      ctx.fillText($('sElev').textContent + ' · ' + $('sTime').textContent, 36, out.height - 32);
+    }
+    raf = requestAnimationFrame(draw);
+  })();
+  const stream = out.captureStream(30);
+  const types = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+  const mimeType = types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+  const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
+  const chunks = [];
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  rec.start(500);
+  return () => new Promise(r => {
+    rec.onstop = () => { cancelAnimationFrame(raf); r(new Blob(chunks, { type: rec.mimeType || 'video/webm' })); };
+    rec.stop();
+  });
+}
+
+$('preview').addEventListener('click', () => !running && fly());
+
+$('record').addEventListener('click', async () => {
+  if (running) return;
+  if (!window.MediaRecorder) return status('Browser tidak mendukung perekaman video.');
+  status('Merekam… jangan pindah tab sampai selesai.');
+  fitTrack(false); await waitIdle();
+  const stop = startRecorder();
+  await fly();
+  const blob = await stop();
+  const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+  const url = URL.createObjectURL(blob);
+  $('download').style.display = 'block';
+  $('download').innerHTML = `<video src="${url}" controls></video><a href="${url}" download="flyover.${ext}">⬇ Download flyover.${ext}</a>`;
+  status(`Selesai! Video ${(blob.size/1e6).toFixed(1)} MB.`);
+});
+</script>
+</body>
+</html>
