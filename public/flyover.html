@@ -49,6 +49,13 @@
       <option value="streets">Jalan (OSM)</option>
     </select>
   </label>
+  <label>Zoom kamera
+    <select id="zoomlvl">
+      <option value="0">Dekat</option>
+      <option value="-1">Sedang</option>
+      <option value="-2">Jauh</option>
+    </select>
+  </label>
   <label>Pitch <input type="number" id="pitch" value="60" min="0" max="80" style="width:56px"></label>
   <label>Resolusi
     <select id="res">
@@ -69,7 +76,7 @@
 <div id="bar"><div></div></div>
 <div id="wrap">
   <div id="map"></div>
-  <div id="stats"><b id="sDist">0.00 km</b><span id="sElev">0 m</span> · <span id="sTime">00:00</span></div>
+  <div id="stats"><b id="sDist">0.00 km</b><span id="sSub">0 m</span></div>
 </div>
 <div id="download"></div>
 
@@ -95,13 +102,24 @@ function buildStyle(kind) {
     transition: { duration: 0, delay: 0 },
     sources: {
       base: STYLES[kind],
+      ...(kind === 'satellite' ? {
+        roads: { type:'raster', tileSize:256, maxzoom:19,
+          tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}'] },
+        places: { type:'raster', tileSize:256, maxzoom:19,
+          tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'] }
+      } : {}),
       dem: { type:'raster-dem', encoding:'terrarium', tileSize:256, maxzoom:13,
         tiles:['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'] }
     },
     layers: [
       { id:'sky', type:'background', paint:{ 'background-color':'#87b6e0' } },
       // no fade: every frame shows fully loaded tiles, no cross-fade flicker
-      { id:'base', type:'raster', source:'base', paint:{ 'raster-fade-duration': 0 } }
+      { id:'base', type:'raster', source:'base', paint:{ 'raster-fade-duration': 0 } },
+      // road + place names on top of satellite imagery
+      ...(kind === 'satellite' ? [
+        { id:'roads', type:'raster', source:'roads', paint:{ 'raster-fade-duration': 0 } },
+        { id:'places', type:'raster', source:'places', paint:{ 'raster-fade-duration': 0 } }
+      ] : [])
     ],
     terrain: { source:'dem', exaggeration:1.4 }
   };
@@ -262,9 +280,8 @@ function buildPlan(fps) {
   const durSec = Math.min(120, Math.max(5, +$('duration').value || 20));
   const pitch = Math.min(80, Math.max(0, +$('pitch').value || 0));
   const total = track.total;
-  const zoom = Math.max(12.5, Math.min(16, 15.5 - Math.log2(Math.max(total, 1)) * 0.35));
+  const zoom = Math.max(14.5, Math.min(17.5, 16.8 - Math.log2(Math.max(total, 1)) * 0.25)) + (+$('zoomlvl').value || 0);
   const look = Math.max(0.3, total * 0.03);
-  const t0 = track.coords[0][3];
 
   // flight distances + raw bearings
   const nFly = Math.round(durSec * fps);
@@ -281,7 +298,7 @@ function buildPlan(fps) {
   for (let i = 1; i < br.length; i++) br[i] = br[i-1] + (br[i] - br[i-1]) * alpha;
   for (let i = br.length - 2; i >= 0; i--) br[i] = br[i+1] + (br[i] - br[i+1]) * alpha;
 
-  const stat = d => { const p = pointAt(d); return { d, ele: p.ele, time: p.time != null && t0 != null ? p.time - t0 : null }; };
+  const stat = d => ({ d, ele: pointAt(d).ele, speed: speedAt(d) });
   const frames = [];
   const push = (cam, d, showStats) => frames.push({ cam, d, stats: showStats ? stat(d) : null });
 
@@ -335,24 +352,31 @@ function applyFrame(f) {
   map.jumpTo(f.cam);
 }
 
-const fmtTime = ms => { const s = Math.floor(ms/1000), h = Math.floor(s/3600), m = Math.floor(s/60)%60, ss = s%60;
-  return (h ? h + ':' : '') + String(m).padStart(2,'0') + ':' + String(ss).padStart(2,'0'); };
-const statText = s => ({ dist: s.d.toFixed(2) + ' km', sub: Math.round(s.ele) + ' m · ' + (s.time != null ? fmtTime(s.time) : '--:--') });
+// speed (km/h) averaged over ±150 m of track, null if the GPX has no timestamps
+function speedAt(d) {
+  if (track.coords[0][3] == null) return null;
+  const w = Math.min(0.15, track.total / 2);
+  const a = Math.max(0, Math.min(d - w, track.total - 2 * w)), b = a + 2 * w;
+  const ta = pointAt(a).time, tb = pointAt(b).time;
+  if (ta == null || tb == null || tb <= ta) return null;
+  return (b - a) / ((tb - ta) / 3600000);
+}
+const statText = s => ({ dist: s.d.toFixed(2) + ' km',
+  sub: 'Elev ' + Math.round(s.ele) + ' m' + (s.speed != null ? '  ·  ' + s.speed.toFixed(1) + ' km/h' : '') });
 
 function showStatsDom(s) {
   $('stats').style.display = s ? 'block' : 'none';
   if (!s) return;
   const t = statText(s);
   $('sDist').textContent = t.dist;
-  const [ele, tm] = t.sub.split(' · ');
-  $('sElev').textContent = ele; $('sTime').textContent = tm;
+  $('sSub').textContent = t.sub;
 }
 
 // ---------- preview (realtime, not recorded) ----------
 let running = false;
 function setBusy(b) {
   running = b;
-  for (const id of ['preview', 'record', 'gpx', 'style', 'res', 'fps', 'duration', 'pitch']) $(id).disabled = b;
+  for (const id of ['preview', 'record', 'gpx', 'style', 'res', 'fps', 'duration', 'pitch', 'zoomlvl']) $(id).disabled = b;
 }
 
 $('preview').addEventListener('click', async () => {
@@ -378,13 +402,13 @@ $('preview').addEventListener('click', async () => {
 // until everything in view is loaded (or timeout). Returns true if fully loaded.
 // Render, and if tiles are missing wait for them WITHOUT rendering, then render again.
 // Usually 1-2 renders per video frame.
-const SOURCE_IDS = ['base', 'dem', 'full', 'done', 'head'];
+const ALL_SOURCES = ['base', 'roads', 'places', 'dem', 'full', 'done', 'head'];
 async function renderReady(maxMs = 8000) {
   const t = performance.now();
   for (let pass = 0; pass < 8; pass++) {
     map.redraw();
     if (map.loaded()) return true;
-    while (!SOURCE_IDS.every(id => map.isSourceLoaded(id))) {
+    while (!ALL_SOURCES.every(id => !map.getSource(id) || map.isSourceLoaded(id))) {
       if (performance.now() - t > maxMs) { map.redraw(); return false; }
       await sleep(4);
     }
@@ -420,7 +444,7 @@ function drawOverlay(ctx, W, H, s, attrib) {
   if (s) {
     const t = statText(s);
     ctx.fillStyle = 'rgba(0,0,0,.6)';
-    ctx.beginPath(); ctx.roundRect(20*k, H - 100*k, 270*k, 80*k, 12*k); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(20*k, H - 100*k, 300*k, 80*k, 12*k); ctx.fill();
     ctx.fillStyle = '#fff';
     ctx.font = `bold ${30*k}px system-ui, sans-serif`; ctx.fillText(t.dist, 36*k, H - 60*k);
     ctx.font = `${20*k}px system-ui, sans-serif`; ctx.fillText(t.sub, 36*k, H - 32*k);
