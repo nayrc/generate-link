@@ -6,6 +6,7 @@
 <title>GPX Flyover</title>
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/mp4-muxer@5.1.3/build/mp4-muxer.js"></script>
 <style>
   :root { --bg:#0f1115; --panel:#181b22; --text:#e8eaf0; --muted:#9aa1b2; --accent:#fc4c02; }
   * { box-sizing: border-box; }
@@ -21,12 +22,15 @@
   button.secondary { background:#2a2f3a; }
   .file { background:var(--panel); border:1px dashed #3a4050; padding:8px 12px; border-radius:6px; cursor:pointer; font-size:14px; }
   .file input { display:none; }
-  #wrap { position:relative; width:100%; max-width:1280px; margin:0 auto; aspect-ratio:16/9; background:#000; }
+  #wrap { position:relative; width:100%; max-width:1280px; margin:0 auto; aspect-ratio:16/9; background:#000; overflow:hidden; }
   #map { position:absolute; inset:0; }
+  #map.rendering { inset:auto; left:0; top:0; width:1280px; height:720px; transform-origin:0 0; }
   #stats { position:absolute; left:12px; bottom:12px; background:rgba(0,0,0,.6); padding:8px 12px; border-radius:8px; font-size:14px; pointer-events:none; display:none; }
   #stats b { font-size:20px; display:block; }
   #status { padding:8px 16px; color:var(--muted); font-size:13px; min-height:20px; }
-  #download { display:none; padding:0 16px 24px; }
+  #bar { height:4px; background:#2a2f3a; margin:0 16px 8px; border-radius:2px; overflow:hidden; display:none; }
+  #bar div { height:100%; width:0; background:var(--accent); }
+  #download { display:none; padding:12px 16px 24px; max-width:1280px; margin:0 auto; }
   #download video { max-width:100%; width:640px; display:block; margin-bottom:8px; }
   #download a { color:var(--accent); font-weight:600; }
 </style>
@@ -45,11 +49,24 @@
       <option value="streets">Jalan (OSM)</option>
     </select>
   </label>
-  <label>Pitch <input type="number" id="pitch" value="60" min="0" max="85" style="width:56px"></label>
+  <label>Pitch <input type="number" id="pitch" value="60" min="0" max="80" style="width:56px"></label>
+  <label>Resolusi
+    <select id="res">
+      <option value="720">720p</option>
+      <option value="1080">1080p</option>
+    </select>
+  </label>
+  <label>FPS
+    <select id="fps">
+      <option value="30">30</option>
+      <option value="60">60</option>
+    </select>
+  </label>
   <button id="preview" class="secondary" disabled>▶ Preview</button>
   <button id="record" disabled>⏺ Generate Video</button>
 </div>
 <div id="status">Upload file .gpx untuk memulai.</div>
+<div id="bar"><div></div></div>
 <div id="wrap">
   <div id="map"></div>
   <div id="stats"><b id="sDist">0.00 km</b><span id="sElev">0 m</span> · <span id="sTime">00:00</span></div>
@@ -59,7 +76,9 @@
 <script>
 const $ = id => document.getElementById(id);
 const status = t => $('status').textContent = t;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// ---------- map setup ----------
 const STYLES = {
   satellite: { type:'raster', tileSize:256, maxzoom:19,
     tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
@@ -68,18 +87,21 @@ const STYLES = {
     tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
     attribution:'© OpenStreetMap contributors' }
 };
+const ATTRIB = { satellite: 'Imagery © Esri', streets: '© OpenStreetMap contributors' };
 
 function buildStyle(kind) {
   return {
     version: 8,
+    transition: { duration: 0, delay: 0 },
     sources: {
       base: STYLES[kind],
-      dem: { type:'raster-dem', encoding:'terrarium', tileSize:256, maxzoom:14,
+      dem: { type:'raster-dem', encoding:'terrarium', tileSize:256, maxzoom:13,
         tiles:['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'] }
     },
     layers: [
       { id:'sky', type:'background', paint:{ 'background-color':'#87b6e0' } },
-      { id:'base', type:'raster', source:'base' }
+      // no fade: every frame shows fully loaded tiles, no cross-fade flicker
+      { id:'base', type:'raster', source:'base', paint:{ 'raster-fade-duration': 0 } }
     ],
     terrain: { source:'dem', exaggeration:1.4 }
   };
@@ -87,12 +109,12 @@ function buildStyle(kind) {
 
 const map = new maplibregl.Map({
   container: 'map', style: buildStyle('satellite'),
-  center: [106.8, -6.2], zoom: 4, pitch: 0,
-  canvasContextAttributes: { preserveDrawingBuffer: true },
+  center: [106.8, -6.2], zoom: 4, pitch: 0, maxPitch: 80,
+  fadeDuration: 0, maxTileCacheSize: 2000,
   preserveDrawingBuffer: true, attributionControl: { compact: true }
 });
 
-let track = null; // {coords:[[lon,lat,ele,time]], cum:[km], total}
+let track = null;
 
 // ---------- GPX parsing ----------
 function haversine(a, b) {
@@ -106,21 +128,47 @@ function parseGPX(text) {
   const xml = new DOMParser().parseFromString(text, 'application/xml');
   let pts = [...xml.getElementsByTagName('trkpt')];
   if (!pts.length) pts = [...xml.getElementsByTagName('rtept')];
-  if (!pts.length) throw new Error('Tidak ada titik track di file GPX');
-  const coords = pts.map(p => {
+  if (pts.length < 2) throw new Error('Tidak ada titik track di file GPX');
+  const raw = pts.map(p => {
     const ele = p.getElementsByTagName('ele')[0];
     const tm = p.getElementsByTagName('time')[0];
     return [+p.getAttribute('lon'), +p.getAttribute('lat'),
             ele ? +ele.textContent : 0, tm ? Date.parse(tm.textContent) : null];
   }).filter(c => isFinite(c[0]) && isFinite(c[1]));
+
+  // drop duplicate points (zero-length segments)
+  const coords = [raw[0]];
+  for (let i = 1; i < raw.length; i++) if (haversine(coords[coords.length-1], raw[i]) > 0.0005) coords.push(raw[i]);
   const cum = [0];
   for (let i = 1; i < coords.length; i++) cum.push(cum[i-1] + haversine(coords[i-1], coords[i]));
-  return { coords, cum, total: cum[cum.length-1] };
+  const total = cum[cum.length-1];
+  if (!(total > 0)) throw new Error('Track terlalu pendek');
+
+  // decimated geometry for drawing (max ~4000 vertices keeps per-frame updates cheap)
+  const step = total / 4000, drawIdx = [0];
+  for (let i = 1; i < coords.length - 1; i++) if (cum[i] - cum[drawIdx[drawIdx.length-1]] >= step) drawIdx.push(i);
+  drawIdx.push(coords.length - 1);
+
+  // uniformly resampled + smoothed path for the camera (removes GPS jitter)
+  const N = Math.min(6000, Math.max(400, Math.round(total / 0.01)));
+  const res = [];
+  for (let i = 0; i <= N; i++) { const p = interp(coords, cum, total * i / N); res.push([p.lon, p.lat]); }
+  const win = Math.max(2, Math.round(N * Math.max(0.12, total * 0.004) / total));
+  const smooth = movingAverage(res, win);
+
+  return { coords, cum, total, drawIdx, smooth, N };
 }
 
-// position at distance d (km), with linear interpolation
-function pointAt(d) {
-  const { coords, cum } = track;
+function movingAverage(arr, w) {
+  const n = arr.length, sx = [0], sy = [0];
+  for (const p of arr) { sx.push(sx[sx.length-1] + p[0]); sy.push(sy[sy.length-1] + p[1]); }
+  return arr.map((_, i) => {
+    const k = Math.min(w, i, n - 1 - i), a = i - k, b = i + k + 1;
+    return [(sx[b]-sx[a])/(b-a), (sy[b]-sy[a])/(b-a)];
+  });
+}
+
+function interp(coords, cum, d) {
   let lo = 0, hi = cum.length - 1;
   while (lo < hi - 1) { const m = (lo+hi) >> 1; if (cum[m] <= d) lo = m; else hi = m; }
   const seg = cum[hi] - cum[lo] || 1, t = Math.min(1, Math.max(0, (d - cum[lo]) / seg));
@@ -128,43 +176,50 @@ function pointAt(d) {
   return { idx: lo, lon: a[0]+(b[0]-a[0])*t, lat: a[1]+(b[1]-a[1])*t, ele: a[2]+(b[2]-a[2])*t,
            time: a[3] != null && b[3] != null ? a[3]+(b[3]-a[3])*t : null };
 }
+const pointAt = d => interp(track.coords, track.cum, d);
+
+function smoothAt(d) {
+  const f = Math.min(1, Math.max(0, d / track.total)) * track.N, i = Math.min(track.N - 1, Math.floor(f)), t = f - i;
+  const a = track.smooth[i], b = track.smooth[i+1];
+  return { lon: a[0]+(b[0]-a[0])*t, lat: a[1]+(b[1]-a[1])*t };
+}
 
 function bearing(a, b) {
   const r = Math.PI/180;
   const y = Math.sin((b.lon-a.lon)*r)*Math.cos(b.lat*r);
   const x = Math.cos(a.lat*r)*Math.sin(b.lat*r) - Math.sin(a.lat*r)*Math.cos(b.lat*r)*Math.cos((b.lon-a.lon)*r);
-  return (Math.atan2(y, x) / r + 360) % 360;
+  return Math.atan2(y, x) / r;
 }
 
 // ---------- map layers ----------
+const drawCoords = () => track.drawIdx.map(i => [track.coords[i][0], track.coords[i][1]]);
+
 function addLayers() {
   if (!track) return;
-  const line = { type:'Feature', geometry:{ type:'LineString', coordinates: track.coords.map(c => [c[0], c[1]]) } };
-  if (map.getSource('full')) {
-    map.getSource('full').setData(line);
-  } else {
-    map.addSource('full', { type:'geojson', data: line });
-    map.addSource('done', { type:'geojson', data: { type:'FeatureCollection', features:[] } });
-    map.addSource('head', { type:'geojson', data: { type:'FeatureCollection', features:[] } });
-    map.addLayer({ id:'full', type:'line', source:'full', paint:{ 'line-color':'#ffffff', 'line-width':3, 'line-opacity':.55 }, layout:{ 'line-cap':'round', 'line-join':'round' } });
-    map.addLayer({ id:'done-glow', type:'line', source:'done', paint:{ 'line-color':'#fc4c02', 'line-width':10, 'line-opacity':.35, 'line-blur':4 } });
-    map.addLayer({ id:'done', type:'line', source:'done', paint:{ 'line-color':'#fc4c02', 'line-width':5 }, layout:{ 'line-cap':'round', 'line-join':'round' } });
-    map.addLayer({ id:'head', type:'circle', source:'head', paint:{ 'circle-radius':8, 'circle-color':'#fc4c02', 'circle-stroke-color':'#fff', 'circle-stroke-width':3 } });
-  }
+  const line = { type:'Feature', geometry:{ type:'LineString', coordinates: drawCoords() } };
+  if (map.getSource('full')) { map.getSource('full').setData(line); return; }
+  map.addSource('full', { type:'geojson', data: line });
+  map.addSource('done', { type:'geojson', data: { type:'FeatureCollection', features:[] } });
+  map.addSource('head', { type:'geojson', data: { type:'FeatureCollection', features:[] } });
+  map.addLayer({ id:'full', type:'line', source:'full', paint:{ 'line-color':'#ffffff', 'line-width':3, 'line-opacity':.55 }, layout:{ 'line-cap':'round', 'line-join':'round' } });
+  map.addLayer({ id:'done-glow', type:'line', source:'done', paint:{ 'line-color':'#fc4c02', 'line-width':10, 'line-opacity':.35, 'line-blur':4 } });
+  map.addLayer({ id:'done', type:'line', source:'done', paint:{ 'line-color':'#fc4c02', 'line-width':5 }, layout:{ 'line-cap':'round', 'line-join':'round' } });
+  map.addLayer({ id:'head', type:'circle', source:'head', paint:{ 'circle-radius':8, 'circle-color':'#fc4c02', 'circle-stroke-color':'#fff', 'circle-stroke-width':3, 'circle-pitch-alignment':'map' } });
 }
 map.on('style.load', addLayers);
 
-function fitTrack(animate = true) {
+function trackBounds() {
   const b = new maplibregl.LngLatBounds();
-  track.coords.forEach(c => b.extend([c[0], c[1]]));
-  map.fitBounds(b, { padding: 60, pitch: 0, bearing: 0, duration: animate ? 1500 : 0 });
+  track.drawIdx.forEach(i => b.extend([track.coords[i][0], track.coords[i][1]]));
+  return b;
 }
 
 $('gpx').addEventListener('change', async e => {
   const f = e.target.files[0]; if (!f) return;
   try {
     track = parseGPX(await f.text());
-    addLayers(); fitTrack();
+    addLayers();
+    map.fitBounds(trackBounds(), { padding: 60, pitch: 0, bearing: 0, duration: 1500 });
     $('preview').disabled = $('record').disabled = false;
     status(`${f.name}: ${track.coords.length} titik, ${track.total.toFixed(2)} km`);
   } catch (err) { status('Gagal membaca GPX: ' + err.message); }
@@ -172,119 +227,280 @@ $('gpx').addEventListener('change', async e => {
 
 $('style').addEventListener('change', e => map.setStyle(buildStyle(e.target.value)));
 
-// ---------- animation ----------
+// ---------- camera plan (deterministic, precomputed per frame) ----------
+const easeInOut = t => t < .5 ? 4*t*t*t : 1 - (-2*t+2)**3/2;
+// trapezoid velocity: smooth accel/decel, constant speed in the middle
+function progress(t, a = 0.08) {
+  const v = 1 / (1 - a);
+  if (t < a) return v * t * t / (2 * a);
+  if (t > 1 - a) return 1 - v * (1 - t) ** 2 / (2 * a);
+  return v * (t - a / 2);
+}
+const lerp = (a, b, t) => a + (b - a) * t;
+// shortest signed angle from a to b, in (-180, 180]; safe for unwrapped (large/negative) angles
+const angDiff = (a, b) => (((b - a) % 360) + 540) % 360 - 180;
+
+// camera move that zooms + pans without the "sliding" look (pan mostly happens while zoomed out)
+function zoomPan(A, B, t) {
+  const e = easeInOut(t), z = lerp(A.zoom, B.zoom, e), dz = B.zoom - A.zoom;
+  const w = Math.abs(dz) < 1e-3 ? e : (1 - 2 ** -(z - A.zoom)) / (1 - 2 ** -dz);
+  return { center: [lerp(A.center[0], B.center[0], w), lerp(A.center[1], B.center[1], w)],
+           zoom: z, pitch: lerp(A.pitch, B.pitch, e), bearing: A.bearing + angDiff(A.bearing, B.bearing) * e };
+}
+
+function buildPlan(fps) {
+  const durSec = Math.min(120, Math.max(5, +$('duration').value || 20));
+  const pitch = Math.min(80, Math.max(0, +$('pitch').value || 0));
+  const total = track.total;
+  const zoom = Math.max(12.5, Math.min(16, 15.5 - Math.log2(Math.max(total, 1)) * 0.35));
+  const look = Math.max(0.3, total * 0.03);
+  const t0 = track.coords[0][3];
+
+  // flight distances + raw bearings
+  const nFly = Math.round(durSec * fps);
+  const ds = [], br = [];
+  for (let i = 0; i <= nFly; i++) {
+    const d = progress(i / nFly) * total;
+    ds.push(d);
+    const db = Math.min(d, Math.max(0, total - look));
+    br.push(bearing(smoothAt(db), smoothAt(Math.min(total, db + look))));
+  }
+  // unwrap, then forward-backward exponential smoothing (no lag, no sudden turns)
+  for (let i = 1; i < br.length; i++) br[i] = br[i-1] + angDiff(br[i-1], br[i]);
+  const alpha = 1 - Math.exp(-1 / (fps * 0.7));
+  for (let i = 1; i < br.length; i++) br[i] = br[i-1] + (br[i] - br[i-1]) * alpha;
+  for (let i = br.length - 2; i >= 0; i--) br[i] = br[i+1] + (br[i] - br[i+1]) * alpha;
+
+  const stat = d => { const p = pointAt(d); return { d, ele: p.ele, time: p.time != null && t0 != null ? p.time - t0 : null }; };
+  const frames = [];
+  const push = (cam, d, showStats) => frames.push({ cam, d, stats: showStats ? stat(d) : null });
+
+  const bounds = trackBounds();
+  const ov = map.cameraForBounds(bounds, { padding: 80, bearing: 0 });
+  const overview = { center: ov.center.toArray ? ov.center.toArray() : [ov.center.lng, ov.center.lat], zoom: ov.zoom, pitch: 0, bearing: 0 };
+  const s0 = smoothAt(0);
+  const startCam = { center: [s0.lon, s0.lat], zoom, pitch, bearing: br[0] };
+
+  // intro: hold overview, then zoom in to start
+  for (let i = 0; i < fps * 0.6; i++) push(overview, 0, false);
+  const nIntro = Math.round(fps * 3);
+  for (let i = 1; i <= nIntro; i++) push(zoomPan(overview, startCam, i / nIntro), 0, i / nIntro > .5);
+
+  // flight
+  for (let i = 0; i <= nFly; i++) {
+    const c = smoothAt(ds[i]);
+    push({ center: [c.lon, c.lat], zoom, pitch, bearing: br[i] }, ds[i], true);
+  }
+
+  // outro: pull back to whole route (tilted), then hold
+  const endCam = frames[frames.length - 1].cam;
+  const fo = map.cameraForBounds(bounds, { padding: 80, bearing: endCam.bearing });
+  const finalCam = { center: fo.center.toArray ? fo.center.toArray() : [fo.center.lng, fo.center.lat],
+                     zoom: fo.zoom - 0.4, pitch: Math.min(pitch, 45), bearing: endCam.bearing };
+  const nOut = Math.round(fps * 3);
+  for (let i = 1; i <= nOut; i++) push(zoomPan(endCam, finalCam, i / nOut), total, true);
+  const nHold = Math.round(fps * 2);
+  for (let i = 1; i <= nHold; i++) push({ ...finalCam, bearing: finalCam.bearing + 8 * easeInOut(i / nHold) }, total, true);
+  return frames;
+}
+
+// ---------- apply one frame ----------
+let lastIdx = -1;
+function applyFrame(f) {
+  const d = f.d, p = pointAt(d);
+  if (d <= 0) {
+    if (lastIdx !== -2) map.getSource('done').setData({ type:'FeatureCollection', features:[] });
+    lastIdx = -2;
+  } else {
+    // done line: decimated vertices up to current point + exact head position
+    const di = track.drawIdx; let k = 0, hi = di.length - 1;
+    while (k < hi) { const m = (k + hi + 1) >> 1; if (di[m] <= p.idx) k = m; else hi = m - 1; }
+    const coords = [];
+    for (let j = 0; j <= k; j++) coords.push([track.coords[di[j]][0], track.coords[di[j]][1]]);
+    coords.push([p.lon, p.lat]);
+    map.getSource('done').setData({ type:'Feature', geometry:{ type:'LineString', coordinates: coords } });
+    lastIdx = p.idx;
+  }
+  map.getSource('head').setData({ type:'Point', coordinates:[p.lon, p.lat] });
+  map.jumpTo(f.cam);
+}
+
 const fmtTime = ms => { const s = Math.floor(ms/1000), h = Math.floor(s/3600), m = Math.floor(s/60)%60, ss = s%60;
   return (h ? h + ':' : '') + String(m).padStart(2,'0') + ':' + String(ss).padStart(2,'0'); };
-const ease = t => t < .5 ? 2*t*t : 1 - (-2*t+2)**2/2;
+const statText = s => ({ dist: s.d.toFixed(2) + ' km', sub: Math.round(s.ele) + ' m · ' + (s.time != null ? fmtTime(s.time) : '--:--') });
 
+function showStatsDom(s) {
+  $('stats').style.display = s ? 'block' : 'none';
+  if (!s) return;
+  const t = statText(s);
+  $('sDist').textContent = t.dist;
+  const [ele, tm] = t.sub.split(' · ');
+  $('sElev').textContent = ele; $('sTime').textContent = tm;
+}
+
+// ---------- preview (realtime, not recorded) ----------
 let running = false;
-const withTimeout = (pr, ms) => Promise.race([pr, new Promise(r => setTimeout(r, ms))]);
-function waitIdle(ms = 8000) { return withTimeout(new Promise(r => map.loaded() && map.areTilesLoaded() ? r() : map.once('idle', r)), ms); }
-const waitMoveEnd = ms => withTimeout(new Promise(r => map.once('moveend', r)), ms);
+function setBusy(b) {
+  running = b;
+  for (const id of ['preview', 'record', 'gpx', 'style', 'res', 'fps', 'duration', 'pitch']) $(id).disabled = b;
+}
 
-async function fly() {
-  running = true;
-  $('preview').disabled = $('record').disabled = true;
-  const dur = Math.max(5, +$('duration').value) * 1000;
-  const pitch = +$('pitch').value;
-  const zoom = Math.max(12.5, Math.min(16, 15.5 - Math.log2(Math.max(track.total, 1)) * 0.35));
-  const t0 = track.coords[0][3];
-  const lookAhead = Math.max(0.05, track.total * 0.02);
-  $('stats').style.display = 'block';
-
-  // intro: zoom from overview to start
-  const start = pointAt(0);
-  const initBearing = bearing(start, pointAt(lookAhead));
-  map.getSource('done').setData({ type:'FeatureCollection', features:[] });
-  map.getSource('head').setData({ type:'Point', coordinates:[start.lon, start.lat] });
-  map.flyTo({ center:[start.lon, start.lat], zoom, pitch, bearing: initBearing, duration: 2500, essential: true });
-  await waitMoveEnd(4000);
-  await waitIdle();
-
-  let camBearing = initBearing;
+$('preview').addEventListener('click', async () => {
+  if (running || !track) return;
+  setBusy(true);
+  const fps = 30, frames = buildPlan(fps);
+  status('Preview… (video hasil Generate akan lebih mulus & tajam)');
   await new Promise(resolve => {
     const begin = performance.now();
-    function frame(now) {
-      const p = Math.min(1, (now - begin) / dur);
-      const d = ease(p) * track.total;
-      const cur = pointAt(d);
-      const ahead = pointAt(Math.min(track.total, d + lookAhead));
-      // smooth bearing
-      let target = bearing(cur, ahead), diff = ((target - camBearing + 540) % 360) - 180;
-      if (d + lookAhead < track.total) camBearing = (camBearing + diff * 0.04 + 360) % 360;
-
-      const done = track.coords.slice(0, cur.idx + 1).map(c => [c[0], c[1]]);
-      done.push([cur.lon, cur.lat]);
-      map.getSource('done').setData({ type:'Feature', geometry:{ type:'LineString', coordinates: done } });
-      map.getSource('head').setData({ type:'Point', coordinates:[cur.lon, cur.lat] });
-      map.jumpTo({ center:[cur.lon, cur.lat], bearing: camBearing, pitch, zoom });
-
-      $('sDist').textContent = d.toFixed(2) + ' km';
-      $('sElev').textContent = Math.round(cur.ele) + ' m';
-      $('sTime').textContent = cur.time != null && t0 != null ? fmtTime(cur.time - t0) : '--:--';
-      if (p < 1) requestAnimationFrame(frame); else resolve();
-    }
-    requestAnimationFrame(frame);
+    (function tick(now) {
+      const i = Math.min(frames.length - 1, Math.floor((now - begin) / 1000 * fps));
+      applyFrame(frames[i]); showStatsDom(frames[i].stats);
+      if (i < frames.length - 1 && running) requestAnimationFrame(tick); else resolve();
+    })(begin);
   });
+  status('Preview selesai.');
+  setBusy(false);
+});
 
-  // outro: pull back to whole route
-  const b = new maplibregl.LngLatBounds();
-  track.coords.forEach(c => b.extend([c[0], c[1]]));
-  map.fitBounds(b, { padding: 60, pitch: 45, bearing: camBearing, duration: 3000 });
-  await waitMoveEnd(4500);
-  await new Promise(r => setTimeout(r, 1200));
-  running = false;
-  $('preview').disabled = $('record').disabled = false;
+// ---------- offline render: wait for tiles every frame, encode at fixed fps ----------
+// Render the current camera, then re-render only when new tiles/data arrive,
+// until everything in view is loaded (or timeout). Returns true if fully loaded.
+// Render, and if tiles are missing wait for them WITHOUT rendering, then render again.
+// Usually 1-2 renders per video frame.
+const SOURCE_IDS = ['base', 'dem', 'full', 'done', 'head'];
+async function renderReady(maxMs = 8000) {
+  const t = performance.now();
+  for (let pass = 0; pass < 8; pass++) {
+    map.redraw();
+    if (map.loaded()) return true;
+    while (!SOURCE_IDS.every(id => map.isSourceLoaded(id))) {
+      if (performance.now() - t > maxMs) { map.redraw(); return false; }
+      await sleep(4);
+    }
+  }
+  map.redraw();
+  return map.loaded();
 }
 
-// ---------- recording ----------
-// Draw map canvas + stats overlay onto an offscreen canvas so the overlay is in the video
-function startRecorder() {
-  const src = map.getCanvas();
-  const out = document.createElement('canvas');
-  out.width = 1280; out.height = 720;
-  const ctx = out.getContext('2d');
-  let raf;
-  (function draw() {
-    ctx.drawImage(src, 0, 0, out.width, out.height);
-    if ($('stats').style.display !== 'none') {
-      ctx.fillStyle = 'rgba(0,0,0,.6)';
-      ctx.beginPath(); ctx.roundRect(20, out.height - 100, 260, 80, 12); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 30px system-ui';
-      ctx.fillText($('sDist').textContent, 36, out.height - 60);
-      ctx.font = '20px system-ui';
-      ctx.fillText($('sElev').textContent + ' · ' + $('sTime').textContent, 36, out.height - 32);
-    }
-    raf = requestAnimationFrame(draw);
-  })();
-  const stream = out.captureStream(30);
-  const types = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
-  const mimeType = types.find(t => MediaRecorder.isTypeSupported(t)) || '';
-  const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
-  const chunks = [];
-  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
-  rec.start(500);
-  return () => new Promise(r => {
-    rec.onstop = () => { cancelAnimationFrame(raf); r(new Blob(chunks, { type: rec.mimeType || 'video/webm' })); };
-    rec.stop();
-  });
+// While recording we drive rendering ourselves; stop MapLibre's own rAF repaints
+// so they don't compete with the encoder for CPU/GPU.
+function takeOverRendering() {
+  const orig = map.triggerRepaint;
+  map.triggerRepaint = () => {};
+  return () => { map.triggerRepaint = orig; map.triggerRepaint(); };
 }
 
-$('preview').addEventListener('click', () => !running && fly());
+async function pickCodec(W, H, fps) {
+  const bitrate = W >= 1920 ? 18_000_000 : 10_000_000;
+  const cands = [
+    ['avc1.640033', 'avc'], ['avc1.640028', 'avc'], ['avc1.4d0028', 'avc'], ['avc1.42003e', 'avc'], ['avc1.42001f', 'avc'],
+    ['vp09.00.40.08', 'vp9'], ['vp09.00.10.08', 'vp9']
+  ];
+  for (const [codec, mux] of cands) {
+    const cfg = { codec, width: W, height: H, bitrate, framerate: fps, latencyMode: 'quality' };
+    if (mux === 'avc') cfg.avc = { format: 'avc' };
+    try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return { cfg, mux }; } catch {}
+  }
+  return null;
+}
+
+function drawOverlay(ctx, W, H, s, attrib) {
+  const k = H / 720;
+  if (s) {
+    const t = statText(s);
+    ctx.fillStyle = 'rgba(0,0,0,.6)';
+    ctx.beginPath(); ctx.roundRect(20*k, H - 100*k, 270*k, 80*k, 12*k); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${30*k}px system-ui, sans-serif`; ctx.fillText(t.dist, 36*k, H - 60*k);
+    ctx.font = `${20*k}px system-ui, sans-serif`; ctx.fillText(t.sub, 36*k, H - 32*k);
+  }
+  ctx.font = `${12*k}px system-ui, sans-serif`; ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.fillText(attrib, W - 10*k, H - 10*k);
+  ctx.textAlign = 'left';
+}
 
 $('record').addEventListener('click', async () => {
-  if (running) return;
-  if (!window.MediaRecorder) return status('Browser tidak mendukung perekaman video.');
-  status('Merekam… jangan pindah tab sampai selesai.');
-  fitTrack(false); await waitIdle();
-  const stop = startRecorder();
-  await fly();
-  const blob = await stop();
-  const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
-  const url = URL.createObjectURL(blob);
-  $('download').style.display = 'block';
-  $('download').innerHTML = `<video src="${url}" controls></video><a href="${url}" download="flyover.${ext}">⬇ Download flyover.${ext}</a>`;
-  status(`Selesai! Video ${(blob.size/1e6).toFixed(1)} MB.`);
+  if (running || !track) return;
+  if (!window.VideoEncoder || !window.Mp4Muxer)
+    return status('Browser ini belum mendukung WebCodecs. Gunakan Chrome / Edge versi terbaru.');
+
+  const H = +$('res').value, W = Math.round(H * 16 / 9), fps = +$('fps').value;
+  const enc = await pickCodec(W, H, fps);
+  if (!enc) return status('Encoder video tidak tersedia di browser ini.');
+
+  setBusy(true);
+  $('download').style.display = 'none';
+  $('bar').style.display = 'block';
+  const mapEl = $('map'), wrap = $('wrap');
+
+  // render the map at an exact 1280x720 layout × pixelRatio = output size, scaled down visually
+  mapEl.classList.add('rendering');
+  const fit = () => mapEl.style.transform = `scale(${wrap.clientWidth / 1280})`;
+  fit(); window.addEventListener('resize', fit);
+  map.setPixelRatio(W / 1280);
+  map.resize();
+
+  const out = document.createElement('canvas');
+  out.width = W; out.height = H;
+  const ctx = out.getContext('2d', { willReadFrequently: true });
+  const attrib = ATTRIB[$('style').value];
+  const restoreRendering = takeOverRendering();
+
+  let encErr = null;
+  const muxer = new Mp4Muxer.Muxer({
+    target: new Mp4Muxer.ArrayBufferTarget(),
+    video: { codec: enc.mux, width: W, height: H, frameRate: fps },
+    fastStart: 'in-memory'
+  });
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: e => { encErr = e; }
+  });
+  encoder.configure(enc.cfg);
+
+  try {
+    const frames = buildPlan(fps);
+    const started = performance.now();
+    for (let i = 0; i < frames.length; i++) {
+      if (encErr) throw encErr;
+      const f = frames[i];
+      applyFrame(f); showStatsDom(f.stats);
+      await renderReady();
+      ctx.drawImage(map.getCanvas(), 0, 0, W, H);
+      drawOverlay(ctx, W, H, f.stats, attrib);
+      const vf = new VideoFrame(out, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
+      encoder.encode(vf, { keyFrame: i % (fps * 2) === 0 });
+      vf.close();
+      while (encoder.encodeQueueSize > 8) await sleep(5);
+
+      if (i % 5 === 0 || i === frames.length - 1) {
+        const pct = (i + 1) / frames.length, el = (performance.now() - started) / 1000;
+        const eta = pct > 0.02 ? Math.round(el / pct - el) : '…';
+        $('bar').firstElementChild.style.width = (pct * 100).toFixed(1) + '%';
+        status(`Rendering frame ${i + 1}/${frames.length} (${Math.round(pct*100)}%) · sisa ±${eta} dtk · biarkan tab ini tetap terbuka`);
+      }
+    }
+    await encoder.flush();
+    muxer.finalize();
+    const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
+    const url = URL.createObjectURL(blob);
+    $('download').style.display = 'block';
+    $('download').innerHTML = `<video src="${url}" controls></video><a href="${url}" download="flyover.mp4">⬇ Download flyover.mp4</a>`;
+    status(`Selesai! ${W}×${H} @ ${fps}fps, ${(frames.length / fps).toFixed(1)} detik, ${(blob.size/1e6).toFixed(1)} MB.`);
+  } catch (err) {
+    console.error(err);
+    status('Gagal membuat video: ' + (err.message || err));
+  } finally {
+    try { encoder.state !== 'closed' && encoder.close(); } catch {}
+    restoreRendering();
+    window.removeEventListener('resize', fit);
+    mapEl.classList.remove('rendering');
+    mapEl.style.transform = '';
+    map.setPixelRatio(window.devicePixelRatio);
+    map.resize();
+    $('bar').style.display = 'none';
+    setBusy(false);
+  }
 });
 </script>
 </body>
