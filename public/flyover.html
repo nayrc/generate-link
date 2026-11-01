@@ -267,7 +267,9 @@ function addLayers() {
   map.addLayer({ id:'done', type:'line', source:'done', paint:{ 'line-color':'#fc4c02', 'line-width':5 }, layout:{ 'line-cap':'round', 'line-join':'round' } });
   map.addLayer({ id:'head', type:'circle', source:'head', paint:{ 'circle-radius':8, 'circle-color':'#fc4c02', 'circle-stroke-color':'#fff', 'circle-stroke-width':3, 'circle-pitch-alignment':'map' } });
 }
-map.on('style.load', addLayers);
+// style JSON ready (tiles may still be loading) -> safe to add our sources/layers
+let styleReady = false;
+map.on('style.load', () => { styleReady = true; addLayers(); });
 
 function trackBounds() {
   const b = new maplibregl.LngLatBounds();
@@ -286,11 +288,11 @@ $('gpx').addEventListener('change', async e => {
   } catch (err) { status('Gagal membaca GPX: ' + err.message); }
 });
 
-$('style').addEventListener('change', e => map.setStyle(buildStyle(e.target.value), { diff: false }));
+$('style').addEventListener('change', e => { styleReady = false; map.setStyle(buildStyle(e.target.value), { diff: false }); });
 
 // make sure the route sources/layers exist (style may have been swapped or still loading)
 async function ensureLayers() {
-  if (!map.isStyleLoaded()) await new Promise(r => { const f = () => map.isStyleLoaded() ? r() : setTimeout(f, 50); f(); });
+  if (!styleReady) await new Promise(r => { const f = () => styleReady ? r() : setTimeout(f, 50); f(); });
   if (!map.getSource('done')) {
     for (const id of ['head', 'done', 'done-glow', 'full']) if (map.getLayer(id)) map.removeLayer(id);
     for (const id of ['full', 'done', 'head']) if (map.getSource(id)) map.removeSource(id);
