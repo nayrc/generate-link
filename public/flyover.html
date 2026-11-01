@@ -23,15 +23,17 @@
   .file { background:var(--panel); border:1px dashed #3a4050; padding:8px 12px; border-radius:6px; cursor:pointer; font-size:14px; }
   .file input { display:none; }
   #wrap { position:relative; width:100%; max-width:1280px; margin:0 auto; aspect-ratio:16/9; background:#000; overflow:hidden; }
-  #map { position:absolute; inset:0; }
-  #map.rendering { inset:auto; left:0; top:0; width:1280px; height:720px; transform-origin:0 0; }
+  #wrap.vertical { aspect-ratio:9/16; max-width:420px; }
+  /* map is laid out at a fixed "phone-like" size and scaled to fit, so preview == video */
+  #map { position:absolute; left:0; top:0; transform-origin:0 0; }
+  #wrap.vertical #stats { left:50%; transform:translateX(-50%); bottom:22%; white-space:nowrap; }
   #stats { position:absolute; left:12px; bottom:12px; background:rgba(0,0,0,.6); padding:8px 12px; border-radius:8px; font-size:14px; pointer-events:none; display:none; }
   #stats b { font-size:20px; display:block; }
   #status { padding:8px 16px; color:var(--muted); font-size:13px; min-height:20px; }
   #bar { height:4px; background:#2a2f3a; margin:0 16px 8px; border-radius:2px; overflow:hidden; display:none; }
   #bar div { height:100%; width:0; background:var(--accent); }
   #download { display:none; padding:12px 16px 24px; max-width:1280px; margin:0 auto; }
-  #download video { max-width:100%; width:640px; display:block; margin-bottom:8px; }
+  #download video { max-width:100%; max-height:70vh; display:block; margin-bottom:8px; }
   #download a { color:var(--accent); font-weight:600; }
 </style>
 </head>
@@ -42,7 +44,24 @@
 </header>
 <div class="controls">
   <label class="file">📂 Upload GPX<input type="file" id="gpx" accept=".gpx,application/gpx+xml"></label>
-  <label>Durasi (detik) <input type="number" id="duration" value="20" min="5" max="120" style="width:64px"></label>
+  <label>Format
+    <select id="format">
+      <option value="v1080">Vertical 9:16 · Story 1080×1920</option>
+      <option value="v720">Vertical 9:16 · Story 720×1280</option>
+      <option value="l1080">Landscape 16:9 · 1080p</option>
+      <option value="l720">Landscape 16:9 · 720p</option>
+    </select>
+  </label>
+  <label>Durasi video
+    <select id="duration">
+      <option value="auto">Otomatis (maks 60 dtk)</option>
+      <option value="15">15 dtk</option>
+      <option value="30">30 dtk</option>
+      <option value="60">60 dtk</option>
+      <option value="90">90 dtk</option>
+      <option value="120">120 dtk</option>
+    </select>
+  </label>
   <label>Gaya peta
     <select id="style">
       <option value="satellite">Satelit</option>
@@ -57,13 +76,9 @@
       <option value="-3">Jauh</option>
     </select>
   </label>
-  <label>Pitch <input type="number" id="pitch" value="60" min="0" max="80" style="width:56px"></label>
-  <label>Resolusi
-    <select id="res">
-      <option value="720">720p</option>
-      <option value="1080">1080p</option>
-    </select>
-  </label>
+  <label title="Kalau rute terlalu panjang untuk durasinya, kamera mundur sedikit supaya gerakan tidak terlalu cepat">
+    <input type="checkbox" id="readable" checked> Jaga nama jalan terbaca</label>
+  <label>Pitch <input type="number" id="pitch" value="50" min="0" max="80" style="width:56px"></label>
   <label>FPS
     <select id="fps">
       <option value="30">30</option>
@@ -135,6 +150,33 @@ const map = new maplibregl.Map({
 
 let track = null;
 
+// ---------- output format / layout ----------
+// The map is always laid out at a phone-like CSS size (short side 540px) and rendered with
+// pixelRatio = output/layout. Raster road labels therefore come out ~2x bigger in a 1080p video
+// and stay readable on a phone.
+const FORMATS = { v1080: [1080, 1920], v720: [720, 1280], l1080: [1920, 1080], l720: [1280, 720] };
+function fmt() {
+  const [W, H] = FORMATS[$('format').value] || FORMATS.l720, vertical = H > W;
+  return { W, H, vertical, lw: vertical ? 540 : 960, lh: vertical ? 960 : 540 };
+}
+let recordPR = null;
+function applyLayout() {
+  const f = fmt(), mapEl = $('map'), wrap = $('wrap');
+  wrap.classList.toggle('vertical', f.vertical);
+  mapEl.style.width = f.lw + 'px';
+  mapEl.style.height = f.lh + 'px';
+  const sc = wrap.clientWidth / f.lw;
+  mapEl.style.transform = `scale(${sc})`;
+  map.setPixelRatio(recordPR || Math.max(1, (window.devicePixelRatio || 1) * sc));
+  map.resize();
+}
+applyLayout();
+window.addEventListener('resize', applyLayout);
+$('format').addEventListener('change', () => {
+  applyLayout();
+  if (track) map.fitBounds(trackBounds(), { padding: 40, pitch: 0, bearing: 0, duration: 0 });
+});
+
 // ---------- GPX parsing ----------
 function haversine(a, b) {
   const R = 6371, r = Math.PI / 180;
@@ -172,10 +214,10 @@ function parseGPX(text) {
   const N = Math.min(6000, Math.max(400, Math.round(total / 0.01)));
   const res = [];
   for (let i = 0; i <= N; i++) { const p = interp(coords, cum, total * i / N); res.push([p.lon, p.lat]); }
-  const win = Math.max(2, Math.round(N * Math.max(0.12, total * 0.004) / total));
-  const smooth = movingAverage(res, win);
+  const midLat = drawIdx.reduce((a, i) => a + coords[i][1], 0) / drawIdx.length;
 
-  return { coords, cum, total, drawIdx, smooth, N };
+  // smooth path is (re)computed per plan, with a window that depends on the zoom
+  return { coords, cum, total, drawIdx, res, smooth: res, N, midLat };
 }
 
 function movingAverage(arr, w) {
@@ -274,15 +316,41 @@ function zoomPan(A, B, t) {
   const e = easeInOut(t), z = lerp(A.zoom, B.zoom, e), dz = B.zoom - A.zoom;
   const w = Math.abs(dz) < 1e-3 ? e : (1 - 2 ** -(z - A.zoom)) / (1 - 2 ** -dz);
   return { center: [lerp(A.center[0], B.center[0], w), lerp(A.center[1], B.center[1], w)],
-           zoom: z, pitch: lerp(A.pitch, B.pitch, e), bearing: A.bearing + angDiff(A.bearing, B.bearing) * e };
+           zoom: z, pitch: lerp(A.pitch, B.pitch, e), bearing: A.bearing + angDiff(A.bearing, B.bearing) * e,
+           padding: { top: Math.round(lerp(A.padding.top, B.padding.top, e)), bottom: 0, left: 0, right: 0 } };
 }
 
+// metres per CSS pixel at zoom z (MapLibre uses 512px world tiles)
+const mpp = (z, lat) => 40075016.686 * Math.cos(lat * Math.PI / 180) / (512 * 2 ** z);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+// max on-screen ground speed (CSS px / s at screen centre) where street names stay readable
+const MAX_PX_PER_SEC = 300;
+// intro hold + zoom-in + zoom-out + end hold
+const EXTRA_SEC = 0.6 + 3 + 3 + 2;
+
 function buildPlan(fps) {
-  const durSec = Math.min(120, Math.max(5, +$('duration').value || 20));
-  const pitch = Math.min(80, Math.max(0, +$('pitch').value || 0));
-  const total = track.total;
-  const zoom = Math.min(19, Math.max(16.5, Math.min(18, 18 - Math.log2(Math.max(total, 1)) * 0.2)) + (+$('zoomlvl').value || 0));
-  const look = Math.max(0.3, total * 0.03);
+  const f = fmt();
+  map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
+  const topPad = Math.round(f.lh * (f.vertical ? 0.25 : 0.15));
+  const pad = t => ({ top: Math.round(topPad * t), bottom: 0, left: 0, right: 0 });
+  const pitch = clamp(+$('pitch').value || 0, 0, 80);
+  const total = track.total, L = total * 1000, lat = track.midLat;
+  const zUser = Math.min(19, clamp(18 - Math.log2(Math.max(total, 1)) * 0.2, 16.5, 18) + (+$('zoomlvl').value || 0));
+  const PEAK = 1.09; // peak / average speed of the trapezoid profile
+  const readableSec = z => L * PEAK / (MAX_PX_PER_SEC * mpp(z, lat));
+
+  // duration: auto = as long as needed to stay readable at the chosen zoom (story-friendly, <= 60s total)
+  const durSel = $('duration').value;
+  const durSec = durSel === 'auto' ? clamp(readableSec(zUser), 8, 60 - EXTRA_SEC) : Math.max(5, +durSel - EXTRA_SEC);
+  // still too fast for that duration? pull the camera back just enough to keep names readable
+  const zFit = Math.log2(40075016.686 * Math.cos(lat * Math.PI / 180) / (512 * (L * PEAK / (durSec * MAX_PX_PER_SEC))));
+  const zoom = $('readable').checked ? Math.min(zUser, zFit) : zUser;
+  const m = mpp(zoom, lat) / 1000; // km per CSS px
+
+  // camera path: remove GPS jitter (~80px window) ; heading looks ~0.6 screen ahead
+  const win = Math.max(1, Math.round(80 * m / (total / track.N)));
+  track.smooth = movingAverage(track.res, win);
+  const look = Math.min(total, Math.max(0.05, 0.6 * f.lh * m));
 
   // flight distances + raw bearings
   const nFly = Math.round(durSec * fps);
@@ -295,19 +363,25 @@ function buildPlan(fps) {
   }
   // unwrap, then forward-backward exponential smoothing (no lag, no sudden turns)
   for (let i = 1; i < br.length; i++) br[i] = br[i-1] + angDiff(br[i-1], br[i]);
-  const alpha = 1 - Math.exp(-1 / (fps * 0.7));
+  const alpha = 1 - Math.exp(-1 / (fps * 1.5));
   for (let i = 1; i < br.length; i++) br[i] = br[i-1] + (br[i] - br[i-1]) * alpha;
   for (let i = br.length - 2; i >= 0; i--) br[i] = br[i+1] + (br[i] - br[i+1]) * alpha;
+  // limit rotation speed (rotating raster labels are hard to read): average of a forward- and a
+  // backward-limited pass keeps the limit and cancels the lag
+  const maxStep = 25 / fps, fw = br.slice(), bw = br.slice();
+  for (let i = 1; i < fw.length; i++) fw[i] = fw[i-1] + clamp(fw[i] - fw[i-1], -maxStep, maxStep);
+  for (let i = bw.length - 2; i >= 0; i--) bw[i] = bw[i+1] + clamp(bw[i] - bw[i+1], -maxStep, maxStep);
+  for (let i = 0; i < br.length; i++) br[i] = (fw[i] + bw[i]) / 2;
 
   const stat = d => ({ d, ele: pointAt(d).ele, speed: speedAt(d) });
   const frames = [];
   const push = (cam, d, showStats) => frames.push({ cam, d, stats: showStats ? stat(d) : null });
 
   const bounds = trackBounds();
-  const ov = map.cameraForBounds(bounds, { padding: 80, bearing: 0 });
-  const overview = { center: ov.center.toArray ? ov.center.toArray() : [ov.center.lng, ov.center.lat], zoom: ov.zoom, pitch: 0, bearing: 0 };
+  const ov = map.cameraForBounds(bounds, { padding: 40, bearing: 0 });
+  const overview = { center: ov.center.toArray ? ov.center.toArray() : [ov.center.lng, ov.center.lat], zoom: ov.zoom, pitch: 0, bearing: 0, padding: pad(0) };
   const s0 = smoothAt(0);
-  const startCam = { center: [s0.lon, s0.lat], zoom, pitch, bearing: br[0] };
+  const startCam = { center: [s0.lon, s0.lat], zoom, pitch, bearing: br[0], padding: pad(1) };
 
   // intro: hold overview, then zoom in to start
   for (let i = 0; i < fps * 0.6; i++) push(overview, 0, false);
@@ -317,18 +391,24 @@ function buildPlan(fps) {
   // flight
   for (let i = 0; i <= nFly; i++) {
     const c = smoothAt(ds[i]);
-    push({ center: [c.lon, c.lat], zoom, pitch, bearing: br[i] }, ds[i], true);
+    push({ center: [c.lon, c.lat], zoom, pitch, bearing: br[i], padding: pad(1) }, ds[i], true);
   }
 
   // outro: pull back to whole route (tilted), then hold
   const endCam = frames[frames.length - 1].cam;
-  const fo = map.cameraForBounds(bounds, { padding: 80, bearing: endCam.bearing });
+  const fo = map.cameraForBounds(bounds, { padding: 40, bearing: endCam.bearing });
   const finalCam = { center: fo.center.toArray ? fo.center.toArray() : [fo.center.lng, fo.center.lat],
-                     zoom: fo.zoom - 0.4, pitch: Math.min(pitch, 45), bearing: endCam.bearing };
+                     zoom: fo.zoom - 0.4, pitch: Math.min(pitch, 45), bearing: endCam.bearing, padding: pad(0) };
   const nOut = Math.round(fps * 3);
   for (let i = 1; i <= nOut; i++) push(zoomPan(endCam, finalCam, i / nOut), total, true);
   const nHold = Math.round(fps * 2);
   for (let i = 1; i <= nHold; i++) push({ ...finalCam, bearing: finalCam.bearing + 8 * easeInOut(i / nHold) }, total, true);
+  frames.info = {
+    seconds: frames.length / fps, zoom, zUser,
+    note: zoom < zUser - 0.05
+      ? `Rute ${total.toFixed(1)} km terlalu panjang untuk durasi ini, kamera sedikit dimundurkan supaya nama jalan tetap terbaca. Pilih durasi lebih panjang untuk kamera lebih dekat.`
+      : ''
+  };
   return frames;
 }
 
@@ -377,7 +457,7 @@ function showStatsDom(s) {
 let running = false;
 function setBusy(b) {
   running = b;
-  for (const id of ['preview', 'record', 'gpx', 'style', 'res', 'fps', 'duration', 'pitch', 'zoomlvl']) $(id).disabled = b;
+  for (const id of ['preview', 'record', 'gpx', 'style', 'format', 'fps', 'duration', 'pitch', 'zoomlvl', 'readable']) $(id).disabled = b;
 }
 
 $('preview').addEventListener('click', async () => {
@@ -385,7 +465,7 @@ $('preview').addEventListener('click', async () => {
   setBusy(true);
   await ensureLayers();
   const fps = 30, frames = buildPlan(fps);
-  status('Preview… (video hasil Generate akan lebih mulus & tajam)');
+  status(`Preview ±${Math.round(frames.info.seconds)} dtk… (hasil Generate lebih mulus & tajam) ${frames.info.note}`);
   await new Promise(resolve => {
     const begin = performance.now();
     (function tick(now) {
@@ -427,7 +507,7 @@ function takeOverRendering() {
 }
 
 async function pickCodec(W, H, fps) {
-  const bitrate = W >= 1920 ? 18_000_000 : 10_000_000;
+  const bitrate = W * H >= 1920 * 1080 ? 18_000_000 : 10_000_000;
   const cands = [
     ['avc1.640033', 'avc'], ['avc1.640028', 'avc'], ['avc1.4d0028', 'avc'], ['avc1.42003e', 'avc'], ['avc1.42001f', 'avc'],
     ['vp09.00.40.08', 'vp9'], ['vp09.00.10.08', 'vp9']
@@ -441,14 +521,20 @@ async function pickCodec(W, H, fps) {
 }
 
 function drawOverlay(ctx, W, H, s, attrib) {
-  const k = H / 720;
+  const k = Math.min(W, H) / 720, vertical = H > W;
   if (s) {
     const t = statText(s);
+    const fBig = `bold ${30*k}px system-ui, sans-serif`, fSmall = `${20*k}px system-ui, sans-serif`;
+    ctx.font = fBig; const w1 = ctx.measureText(t.dist).width;
+    ctx.font = fSmall; const w2 = ctx.measureText(t.sub).width;
+    const bw = Math.max(w1, w2) + 32*k, bh = 80*k;
+    // story: centred, above Instagram's bottom UI ; landscape: bottom-left
+    const x = vertical ? (W - bw) / 2 : 20*k, y = vertical ? H * 0.78 - bh : H - 20*k - bh;
     ctx.fillStyle = 'rgba(0,0,0,.6)';
-    ctx.beginPath(); ctx.roundRect(20*k, H - 100*k, 300*k, 80*k, 12*k); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(x, y, bw, bh, 12*k); ctx.fill();
     ctx.fillStyle = '#fff';
-    ctx.font = `bold ${30*k}px system-ui, sans-serif`; ctx.fillText(t.dist, 36*k, H - 60*k);
-    ctx.font = `${20*k}px system-ui, sans-serif`; ctx.fillText(t.sub, 36*k, H - 32*k);
+    ctx.font = fBig; ctx.fillText(t.dist, x + 16*k, y + 40*k);
+    ctx.font = fSmall; ctx.fillText(t.sub, x + 16*k, y + 68*k);
   }
   ctx.font = `${12*k}px system-ui, sans-serif`; ctx.textAlign = 'right';
   ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.fillText(attrib, W - 10*k, H - 10*k);
@@ -460,21 +546,16 @@ $('record').addEventListener('click', async () => {
   if (!window.VideoEncoder || !window.Mp4Muxer)
     return status('Browser ini belum mendukung WebCodecs. Gunakan Chrome / Edge versi terbaru.');
 
-  const H = +$('res').value, W = Math.round(H * 16 / 9), fps = +$('fps').value;
+  const { W, H, lw } = fmt(), fps = +$('fps').value;
   const enc = await pickCodec(W, H, fps);
   if (!enc) return status('Encoder video tidak tersedia di browser ini.');
 
   setBusy(true);
   $('download').style.display = 'none';
   $('bar').style.display = 'block';
-  const mapEl = $('map'), wrap = $('wrap');
-
-  // render the map at an exact 1280x720 layout × pixelRatio = output size, scaled down visually
-  mapEl.classList.add('rendering');
-  const fit = () => mapEl.style.transform = `scale(${wrap.clientWidth / 1280})`;
-  fit(); window.addEventListener('resize', fit);
-  map.setPixelRatio(W / 1280);
-  map.resize();
+  // same CSS layout as the preview, rendered at pixelRatio = output / layout
+  recordPR = W / lw;
+  applyLayout();
 
   const out = document.createElement('canvas');
   out.width = W; out.height = H;
@@ -523,18 +604,15 @@ $('record').addEventListener('click', async () => {
     const url = URL.createObjectURL(blob);
     $('download').style.display = 'block';
     $('download').innerHTML = `<video src="${url}" controls></video><a href="${url}" download="flyover.mp4">⬇ Download flyover.mp4</a>`;
-    status(`Selesai! ${W}×${H} @ ${fps}fps, ${(frames.length / fps).toFixed(1)} detik, ${(blob.size/1e6).toFixed(1)} MB.`);
+    status(`Selesai! ${W}×${H} @ ${fps}fps, ${(frames.length / fps).toFixed(1)} detik, ${(blob.size/1e6).toFixed(1)} MB. ${frames.info.note}`);
   } catch (err) {
     console.error(err);
     status('Gagal membuat video: ' + (err.message || err));
   } finally {
     try { encoder.state !== 'closed' && encoder.close(); } catch {}
     restoreRendering();
-    window.removeEventListener('resize', fit);
-    mapEl.classList.remove('rendering');
-    mapEl.style.transform = '';
-    map.setPixelRatio(window.devicePixelRatio);
-    map.resize();
+    recordPR = null;
+    applyLayout();
     $('bar').style.display = 'none';
     setBusy(false);
   }
