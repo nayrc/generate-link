@@ -141,6 +141,7 @@ function buildStyle(kind) {
   };
 }
 
+maplibregl.setMaxParallelImageRequests(24);
 const map = new maplibregl.Map({
   container: 'map', style: buildStyle('satellite'),
   center: [106.8, -6.2], zoom: 4, pitch: 0, maxPitch: 80,
@@ -414,6 +415,20 @@ function buildPlan(fps) {
   return frames;
 }
 
+// ---------- label tiles: one zoom level only ----------
+// With 3D terrain MapLibre draws far-away areas with lower-zoom tiles. Raster label tiles of each
+// zoom level contain different text, so while flying a road name would suddenly swap when its area
+// switches level. Forcing the label sources to the ideal level keeps every name stable.
+const LABEL_SOURCES = ['roads', 'places'];
+function lockLabelZoom() {
+  const z = Math.round(map.getZoom() + 1); // same as MapLibre's coveringZoomLevel for 256px raster tiles
+  for (const id of LABEL_SOURCES) { const src = map.getSource(id); if (src) src.minzoom = Math.min(z, src.maxzoom); }
+}
+function unlockLabelZoom() {
+  for (const id of LABEL_SOURCES) { const src = map.getSource(id); if (src) src.minzoom = 0; }
+  map.triggerRepaint();
+}
+
 // ---------- apply one frame ----------
 let lastIdx = -1;
 function applyFrame(f) {
@@ -433,6 +448,7 @@ function applyFrame(f) {
   }
   map.getSource('head').setData({ type:'Point', coordinates:[p.lon, p.lat] });
   map.jumpTo(f.cam);
+  lockLabelZoom();
 }
 
 // speed (km/h) averaged over ±150 m of track, null if the GPX has no timestamps
@@ -476,6 +492,7 @@ $('preview').addEventListener('click', async () => {
       if (i < frames.length - 1 && running) requestAnimationFrame(tick); else resolve();
     })(begin);
   });
+  unlockLabelZoom();
   status('Preview selesai.');
   setBusy(false);
 });
@@ -486,9 +503,9 @@ $('preview').addEventListener('click', async () => {
 // Render, and if tiles are missing wait for them WITHOUT rendering, then render again.
 // Usually 1-2 renders per video frame.
 const ALL_SOURCES = ['base', 'roads', 'places', 'dem', 'full', 'done', 'head'];
-async function renderReady(maxMs = 8000) {
+async function renderReady(maxMs = 30000) {
   const t = performance.now();
-  for (let pass = 0; pass < 8; pass++) {
+  for (let pass = 0; pass < 30; pass++) {
     map.redraw();
     if (map.loaded()) return true;
     while (!ALL_SOURCES.every(id => !map.getSource(id) || map.isSourceLoaded(id))) {
@@ -581,11 +598,12 @@ $('record').addEventListener('click', async () => {
     await ensureLayers();
     const frames = buildPlan(fps);
     const started = performance.now();
+    let incomplete = 0;
     for (let i = 0; i < frames.length; i++) {
       if (encErr) throw encErr;
       const f = frames[i];
       applyFrame(f); showStatsDom(f.stats);
-      await renderReady();
+      if (!(await renderReady())) incomplete++;
       ctx.drawImage(map.getCanvas(), 0, 0, W, H);
       drawOverlay(ctx, W, H, f.stats, attrib);
       const vf = new VideoFrame(out, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
@@ -606,13 +624,15 @@ $('record').addEventListener('click', async () => {
     const url = URL.createObjectURL(blob);
     $('download').style.display = 'block';
     $('download').innerHTML = `<video src="${url}" controls></video><a href="${url}" download="flyover.mp4">⬇ Download flyover.mp4</a>`;
-    status(`Selesai! ${W}×${H} @ ${fps}fps, ${(frames.length / fps).toFixed(1)} detik, ${(blob.size/1e6).toFixed(1)} MB. ${frames.info.note}`);
+    const warn = incomplete ? ` ⚠ ${incomplete} frame tile petanya belum lengkap (koneksi lambat), coba generate ulang.` : '';
+    status(`Selesai! ${W}×${H} @ ${fps}fps, ${(frames.length / fps).toFixed(1)} detik, ${(blob.size/1e6).toFixed(1)} MB. ${frames.info.note}${warn}`);
   } catch (err) {
     console.error(err);
     status('Gagal membuat video: ' + (err.message || err));
   } finally {
     try { encoder.state !== 'closed' && encoder.close(); } catch {}
     restoreRendering();
+    unlockLabelZoom();
     recordPR = null;
     applyLayout();
     $('bar').style.display = 'none';
