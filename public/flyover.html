@@ -51,9 +51,10 @@
   </label>
   <label>Zoom kamera
     <select id="zoomlvl">
-      <option value="0">Dekat</option>
-      <option value="-1">Sedang</option>
-      <option value="-2">Jauh</option>
+      <option value="1">Sangat dekat</option>
+      <option value="0" selected>Dekat</option>
+      <option value="-1.5">Sedang</option>
+      <option value="-3">Jauh</option>
     </select>
   </label>
   <label>Pitch <input type="number" id="pitch" value="60" min="0" max="80" style="width:56px"></label>
@@ -280,7 +281,7 @@ function buildPlan(fps) {
   const durSec = Math.min(120, Math.max(5, +$('duration').value || 20));
   const pitch = Math.min(80, Math.max(0, +$('pitch').value || 0));
   const total = track.total;
-  const zoom = Math.max(14.5, Math.min(17.5, 16.8 - Math.log2(Math.max(total, 1)) * 0.25)) + (+$('zoomlvl').value || 0);
+  const zoom = Math.min(19, Math.max(16.5, Math.min(18, 18 - Math.log2(Math.max(total, 1)) * 0.2)) + (+$('zoomlvl').value || 0));
   const look = Math.max(0.3, total * 0.03);
 
   // flight distances + raw bearings
