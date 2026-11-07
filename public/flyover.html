@@ -221,12 +221,12 @@
             </select>
           </div>
           <div class="field">
-            <div class="lbl">Kemiringan kamera <b id="pitchVal">75°</b></div>
-            <input type="range" id="pitch" min="0" max="80" step="1" value="75">
+            <div class="lbl">Kemiringan kamera <b id="pitchVal">58°</b></div>
+            <input type="range" id="pitch" min="0" max="80" step="1" value="58">
           </div>
           <div class="field">
             <label class="switch"><input type="checkbox" id="readable" checked><span class="knob"></span>
-              <span>Jaga nama jalan terbaca<small>Kalau rute terlalu panjang untuk durasinya, kamera sedikit mundur supaya gerakan tidak terlalu cepat.</small></span></label>
+              <span>Batasi kecepatan kamera<small>Kalau rute terlalu panjang untuk durasinya, kamera sedikit mundur supaya video tetap nyaman ditonton.</small></span></label>
           </div>
         </div>
         <div class="group">
@@ -315,33 +315,17 @@ const HAZE = '#7ea9de';
 const ATTRIB = { satellite: 'Imagery © Esri · © OpenStreetMap · OpenFreeMap', streets: '© OpenStreetMap contributors' };
 // free vector tiles (OpenStreetMap data, OpenMapTiles schema) for crisp road/place names
 const OFM = 'https://tiles.openfreemap.org';
-const ROAD_CLASSES = ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service'];
-
-// Road and place names drawn as real text: upright towards the camera (not squashed on the
-// ground like raster labels at high pitch), white with a dark halo so they read on imagery.
+// Only area names (city / town / district / village), sparse, so the video stays clean and fewer
+// map tiles have to be loaded per frame. Drawn as real text, upright towards the camera.
 function labelLayers() {
-  const halo = { 'text-color':'#ffffff', 'text-halo-color':'rgba(0,0,0,0.85)', 'text-halo-width':1.8, 'text-halo-blur':0.3 };
   return [
-    { id:'road-lines', type:'line', source:'omt', 'source-layer':'transportation',
-      filter: ['match', ['get','class'], ROAD_CLASSES, true, false],
-      layout: { 'line-cap':'round', 'line-join':'round' },
-      paint: { 'line-color':'rgba(255,255,255,0.4)',
-        'line-width': ['interpolate', ['exponential', 1.6], ['zoom'],
-          12, ['match', ['get','class'], ['motorway','trunk','primary'], 1.4, 0.5],
-          18, ['match', ['get','class'], ['motorway','trunk','primary'], 10, ['secondary','tertiary'], 7, 4]] } },
-    { id:'road-names', type:'symbol', source:'omtlabels', 'source-layer':'transportation_name',
-      filter: ['all', ['has','name'], ['match', ['get','class'], ROAD_CLASSES, true, false]],
-      layout: { 'symbol-placement':'line', 'text-field':['get','name'], 'text-font':['Noto Sans Bold'],
-        'text-size': ['match', ['get','class'], ['motorway','trunk','primary','secondary'], 17, 15],
-        'text-pitch-alignment':'viewport', 'text-rotation-alignment':'map', 'text-keep-upright':true,
-        'text-max-angle':35, 'symbol-spacing':280, 'text-padding':6, 'text-letter-spacing':0.02 },
-      paint: halo },
     { id:'place-names', type:'symbol', source:'omtlabels', 'source-layer':'place',
-      filter: ['all', ['has','name'], ['match', ['get','class'], ['city','town','village','suburb','quarter','neighbourhood','hamlet'], true, false]],
+      filter: ['all', ['has','name'], ['match', ['get','class'], ['city','town','village','suburb'], true, false]],
       layout: { 'text-field':['get','name'], 'text-font':['Noto Sans Bold'],
-        'text-size': ['match', ['get','class'], 'city', 22, 'town', 19, ['village','suburb'], 17, 15],
-        'text-pitch-alignment':'viewport', 'text-padding':8, 'text-max-width':8, 'text-letter-spacing':0.03 },
-      paint: { ...halo, 'text-color':'#fff7d6', 'text-halo-width':2 } }
+        'text-size': ['match', ['get','class'], 'city', 21, 'town', 19, 17],
+        'symbol-sort-key': ['coalesce', ['get','rank'], 99],          // most important places win
+        'text-pitch-alignment':'viewport', 'text-padding':48, 'text-max-width':9, 'text-letter-spacing':0.02 },
+      paint: { 'text-color':'#ffffff', 'text-halo-color':'rgba(0,0,0,0.55)', 'text-halo-width':1.4, 'text-halo-blur':1 } }
   ];
 }
 
@@ -353,9 +337,7 @@ function buildStyle(kind) {
     sources: {
       base: STYLES[kind],
       ...(kind === 'satellite' ? {
-        // same tiles twice: 'omt' (road lines, normal detail levels) and 'omtlabels' (names,
-        // locked to one detail level near the camera, see patchCoveringTiles)
-        omt: { type:'vector', url:`${OFM}/planet` },
+        // place names, locked to one detail level near the camera (see patchCoveringTiles)
         omtlabels: { type:'vector', url:`${OFM}/planet` }
       } : {}),
       dem: { type:'raster-dem', encoding:'terrarium', tileSize:256, maxzoom:13,
@@ -459,9 +441,26 @@ function parseGPX(text) {
 
   // smooth path is (re)computed per plan, with a window that depends on the zoom
   const hasHr = coords.some(c => c[4] != null);
+  // cumulative elevation gain per point (3 m hysteresis against GPS noise)
+  const gainCum = new Float64Array(coords.length);
+  let ref = coords[0][2], g = 0;
+  for (let i = 0; i < coords.length; i++) {
+    const e = coords[i][2];
+    if (e - ref >= 3) { g += e - ref; ref = e; } else if (ref - e >= 3) ref = e;
+    gainCum[i] = g;
+  }
+  // elevation profile for the HUD (lightly smoothed)
+  const hasEle = coords.some(c => c[2] !== 0);
+  let profile = null;
+  if (hasEle) {
+    const n = 240, raw = [];
+    for (let i = 0; i <= n; i++) raw.push(interp(coords, cum, total * i / n).ele);
+    const sm = raw.map((_, i) => { let a = 0, c = 0; for (let j = Math.max(0, i - 2); j <= Math.min(n, i + 2); j++) { a += raw[j]; c++; } return a / c; });
+    profile = { e: sm, min: Math.min(...sm), max: Math.max(...coords.map(c => c[2])) };
+  }
   const nameEl = xml.querySelector('trk > name') || xml.querySelector('metadata > name') || xml.querySelector('rte > name');
   const name = nameEl ? nameEl.textContent.trim() : '';
-  return { coords, cum, total, drawIdx, res, smooth: res, N, midLat, hasHr, name };
+  return { coords, cum, total, drawIdx, res, smooth: res, N, midLat, hasHr, name, gainCum, profile };
 }
 
 function movingAverage(arr, w) {
@@ -498,7 +497,7 @@ function bearing(a, b) {
 }
 
 // ---------- map layers ----------
-const ROUTE_COLOR = '#cdf227';
+const ROUTE_COLOR = '#ff9a2e';
 const drawCoords = () => track.drawIdx.map(i => [track.coords[i][0], track.coords[i][1]]);
 
 function addLayers() {
@@ -510,10 +509,10 @@ function addLayers() {
   map.addSource('done', { type:'geojson', data: { type:'FeatureCollection', features:[] } });
   map.addSource('head', { type:'geojson', data: { type:'FeatureCollection', features:[] } });
   const lineLayout = { 'line-cap':'round', 'line-join':'round' };
-  const below = map.getLayer('road-names') ? 'road-names' : undefined;   // keep names readable on top of the route
-  map.addLayer({ id:'full', type:'line', source:'full', paint:{ 'line-color':ROUTE_COLOR, 'line-width':4, 'line-opacity':.85 }, layout: lineLayout }, below);
+  const below = map.getLayer('place-names') ? 'place-names' : undefined;   // keep names readable on top of the route
+  map.addLayer({ id:'full', type:'line', source:'full', paint:{ 'line-color':'#ffffff', 'line-width':3, 'line-opacity':.3 }, layout: lineLayout }, below);
   map.addLayer({ id:'done', type:'line', source:'done', paint:{ 'line-color':ROUTE_COLOR, 'line-width':6 }, layout: lineLayout }, below);
-  map.addLayer({ id:'head', type:'circle', source:'head', paint:{ 'circle-radius':10, 'circle-color':'#ef4058', 'circle-stroke-color':'#ffffff', 'circle-stroke-width':3 } });
+  map.addLayer({ id:'head', type:'circle', source:'head', paint:{ 'circle-radius':9, 'circle-color':'#2f6bff', 'circle-stroke-color':'#ffffff', 'circle-stroke-width':3 } });
 }
 // style JSON ready (tiles may still be loading) -> safe to add our sources/layers
 let styleReady = false;
@@ -661,7 +660,7 @@ const EXTRA_SEC = 0.6 + 3 + 3 + 2;
 function buildPlan(fps) {
   const f = fmt();
   map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
-  const topPad = Math.round(f.lh * (f.vertical ? 0.3 : 0.2));
+  const topPad = Math.round(f.lh * 0.1);
   const pad = t => ({ top: Math.round(topPad * t), bottom: 0, left: 0, right: 0 });
   const pitch = clamp(+$('pitch').value || 0, 0, 80);
   const total = track.total, L = total * 1000, lat = track.midLat;
@@ -831,88 +830,118 @@ function hrAt(d) {
   for (let i = 0; i <= 6; i++) { const v = pointAt(clamp(d - w + (2 * w * i) / 6, 0, track.total)).hr; if (v != null) { sum += v; n++; } }
   return n ? sum / n : null;
 }
-const statAt = d => ({ d, ele: pointAt(d).ele, speed: speedAt(d), hr: hrAt(d) });
+function statAt(d) {
+  const p = pointAt(d), t0 = track.coords[0][3];
+  return { d, ele: p.ele, speed: speedAt(d), hr: hrAt(d), gain: track.gainCum[p.idx],
+           elapsed: p.time != null && t0 != null ? (p.time - t0) / 1000 : null };
+}
 
 // ---------- HUD: brand + stat row with icons (drawn the same in preview and video) ----------
 let logoImg = null, lastStats = null;
 const FONT_NUM = '"Barlow Condensed", "Arial Narrow", system-ui, sans-serif';
 const FONT_BRAND = 'Montserrat, system-ui, sans-serif';
 
-function drawIcon(ctx, type, cx, cy, s) {
-  ctx.save();
-  ctx.fillStyle = ctx.strokeStyle = '#fff';
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  if (type === 'dist') {            // road in perspective with a dashed centre line
-    ctx.lineWidth = s * 0.13;
-    ctx.beginPath();
-    ctx.moveTo(cx - s * 0.16, cy - s * 0.45); ctx.lineTo(cx - s * 0.42, cy + s * 0.45);
-    ctx.moveTo(cx + s * 0.16, cy - s * 0.45); ctx.lineTo(cx + s * 0.42, cy + s * 0.45);
-    ctx.stroke();
-    ctx.lineWidth = s * 0.1;
-    for (const [a, b] of [[-0.42, -0.24], [-0.08, 0.1], [0.26, 0.45]]) {
-      ctx.beginPath(); ctx.moveTo(cx, cy + a * s); ctx.lineTo(cx, cy + b * s); ctx.stroke();
-    }
-  } else if (type === 'speed') {    // gauge with needle
-    ctx.lineWidth = s * 0.12;
-    ctx.beginPath(); ctx.arc(cx, cy + s * 0.08, s * 0.42, Math.PI * 0.8, Math.PI * 2.2); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx, cy + s * 0.08); ctx.lineTo(cx + s * 0.24, cy - s * 0.16); ctx.stroke();
-    ctx.beginPath(); ctx.arc(cx, cy + s * 0.08, s * 0.09, 0, Math.PI * 2); ctx.fill();
-  } else if (type === 'elev') {     // two peaks
-    ctx.beginPath();
-    ctx.moveTo(cx - s * 0.5, cy + s * 0.4); ctx.lineTo(cx - s * 0.1, cy - s * 0.42); ctx.lineTo(cx + s * 0.12, cy + s * 0.02);
-    ctx.lineTo(cx + s * 0.27, cy - s * 0.16); ctx.lineTo(cx + s * 0.5, cy + s * 0.4); ctx.closePath(); ctx.fill();
-  } else if (type === 'hr') {       // heart
-    ctx.beginPath();
-    for (let i = 0; i <= 64; i++) {
-      const t = (i / 64) * Math.PI * 2;
-      const x = 16 * Math.sin(t) ** 3, y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
-      const px = cx + x * s / 34, py = cy - y * s / 34 - s * 0.04;
-      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
-    }
-    ctx.fill();
-  }
-  ctx.restore();
-}
+const fmtClock = sec => { const m = Math.floor(sec / 60); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
 
 function drawHud(ctx, W, H, s, attrib) {
   const k = Math.min(W, H) / 1080, vertical = H > W;
   ctx.save();
-  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-  ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 12 * k; ctx.shadowOffsetY = 2 * k;
+  ctx.textBaseline = 'alphabetic';
 
-  // brand (optional logo on the left of the text)
+  // soft dark gradients so text reads on any imagery
+  let g = ctx.createLinearGradient(0, 0, 0, H * 0.34);
+  g.addColorStop(0, 'rgba(0,0,0,.5)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H * 0.34);
+  g = ctx.createLinearGradient(0, H * 0.66, 0, H);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.7)');
+  ctx.fillStyle = g; ctx.fillRect(0, H * 0.66, W, H * 0.34);
+
+  // brand pill (logo + title text)
   const brand = ($('brand').value || '').trim();
-  const brandY = vertical ? H * 0.115 : H * 0.095, bSize = 54 * k;
-  ctx.font = `800 ${bSize}px ${FONT_BRAND}`;
-  if ('letterSpacing' in ctx) ctx.letterSpacing = `${4 * k}px`;
-  const tw = brand ? ctx.measureText(brand).width : 0;
-  const lh = bSize * 1.35, lw = logoImg ? lh * logoImg.naturalWidth / logoImg.naturalHeight : 0, gap = logoImg && brand ? 18 * k : 0;
-  const bx = W / 2 - (lw + gap + tw) / 2;
-  if (logoImg) ctx.drawImage(logoImg, bx, brandY - bSize * 0.37 - lh / 2, lw, lh);
-  if (brand) { ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.fillText(brand, bx + lw + gap, brandY); ctx.textAlign = 'center'; }
-  if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+  if (brand || logoImg) {
+    const fs = 42 * k, pillH = 92 * k, padX = 34 * k, cy = vertical ? H * 0.115 : H * 0.1;
+    ctx.font = `800 ${fs}px ${FONT_BRAND}`;
+    const tw = brand ? ctx.measureText(brand).width : 0;
+    const lh = fs * 1.25, lw = logoImg ? lh * logoImg.naturalWidth / logoImg.naturalHeight : 0, gap = logoImg && brand ? 16 * k : 0;
+    const pw = lw + gap + tw + padX * 2, px = (W - pw) / 2;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,.3)'; ctx.shadowBlur = 16 * k; ctx.shadowOffsetY = 4 * k;
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.roundRect(px, cy - pillH / 2, pw, pillH, pillH / 2); ctx.fill();
+    ctx.restore();
+    if (logoImg) ctx.drawImage(logoImg, px + padX, cy - lh / 2, lw, lh);
+    if (brand) { ctx.fillStyle = '#1d211a'; ctx.textAlign = 'left'; ctx.fillText(brand, px + padX + lw + gap, cy + fs * 0.36); }
+  }
 
-  // stat row: distance, speed, elevation, heart rate (only those the GPX has)
+  ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 12 * k; ctx.shadowOffsetY = 2 * k;
+  // stats row: DISTANCE / ELEV GAIN / TIME (speed when there is no elevation)
   if (s) {
-    const items = [{ icon: 'dist', v: s.d.toFixed(2), u: 'km' }];
-    if (s.speed != null) items.push({ icon: 'speed', v: s.speed.toFixed(1), u: 'km/h' });
-    items.push({ icon: 'elev', v: String(Math.round(s.ele)), u: 'm' });
-    if (s.hr != null) items.push({ icon: 'hr', v: String(Math.round(s.hr)), u: 'bpm' });
-    const rowW = vertical ? W : Math.min(W * 0.75, items.length * 330 * k), x0 = (W - rowW) / 2;
-    const iconY = vertical ? H * 0.185 : H * 0.2;
+    const items = [{ l: 'DISTANCE', v: s.d.toFixed(1), u: 'KM' }];
+    if (track && track.profile) items.push({ l: 'ELEV GAIN', v: String(Math.round(s.gain || 0)), u: 'M' });
+    else if (s.speed != null) items.push({ l: 'SPEED', v: s.speed.toFixed(1), u: 'KM/H' });
+    if (s.elapsed != null) items.push({ l: 'TIME', v: fmtClock(s.elapsed), u: 'H' });
+    const rowW = vertical ? W - 60 * k : Math.min(W * 0.7, items.length * 400 * k), x0 = (W - rowW) / 2;
+    const labelY = vertical ? H * 0.205 : H * 0.235;
     items.forEach((it, i) => {
       const cx = x0 + rowW * (i + 0.5) / items.length;
-      drawIcon(ctx, it.icon, cx, iconY, 50 * k);
-      ctx.fillStyle = '#fff';
-      ctx.font = `600 ${86 * k}px ${FONT_NUM}`; ctx.fillText(it.v, cx, iconY + 112 * k);
-      ctx.font = `500 ${44 * k}px ${FONT_NUM}`; ctx.fillText(it.u, cx, iconY + 162 * k);
+      ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.textAlign = 'center';
+      ctx.font = `600 ${30 * k}px system-ui, sans-serif`;
+      if ('letterSpacing' in ctx) ctx.letterSpacing = `${1.5 * k}px`;
+      ctx.fillText(it.l, cx, labelY);
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+      ctx.font = `800 ${84 * k}px ${FONT_BRAND}`; const wv = ctx.measureText(it.v).width;
+      ctx.font = `700 ${32 * k}px ${FONT_BRAND}`; const wu = ctx.measureText(it.u).width;
+      const sx = cx - (wv + 8 * k + wu) / 2;
+      ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
+      ctx.font = `800 ${84 * k}px ${FONT_BRAND}`; ctx.fillText(it.v, sx, labelY + 98 * k);
+      ctx.font = `700 ${32 * k}px ${FONT_BRAND}`; ctx.fillText(it.u, sx + wv + 8 * k, labelY + 98 * k);
     });
   }
 
+  // elevation profile with the current position
+  if (track && track.profile) drawProfile(ctx, W, H, k, vertical, s ? s.d : 0);
+
   // map attribution (required by the tile providers)
   ctx.shadowBlur = 4 * k; ctx.textAlign = 'left';
-  ctx.font = `${18 * k}px system-ui, sans-serif`; ctx.fillStyle = 'rgba(255,255,255,.75)';
-  ctx.fillText(attrib, 16 * k, H - 16 * k);
+  ctx.font = `${17 * k}px system-ui, sans-serif`; ctx.fillStyle = 'rgba(255,255,255,.7)';
+  ctx.fillText(attrib, 16 * k, H - 14 * k);
+  ctx.restore();
+}
+
+function drawProfile(ctx, W, H, k, vertical, d) {
+  const P = track.profile, n = P.e.length - 1;
+  const x0 = 80 * k, x1 = W - 80 * k;
+  const top = vertical ? H * 0.795 : H * 0.74, bot = vertical ? H * 0.885 : H * 0.88;
+  const span = Math.max(10, P.max - P.min);
+  const yOf = e => bot - (e - P.min) / span * (bot - top);
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 10 * k;
+  ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.textAlign = 'left';
+  ctx.font = `600 ${28 * k}px system-ui, sans-serif`;
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${1.5 * k}px`;
+  ctx.fillText('ELEVATION PROFILE', x0, top - 40 * k);
+  if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+  ctx.textAlign = 'right'; ctx.font = `700 ${34 * k}px ${FONT_BRAND}`;
+  ctx.fillText(`↑ ${Math.round(P.max)} m`, x1, top - 40 * k);
+  ctx.shadowBlur = 0;
+  // filled area + outline
+  ctx.beginPath();
+  P.e.forEach((e, i) => { const x = x0 + (x1 - x0) * i / n; i ? ctx.lineTo(x, yOf(e)) : ctx.moveTo(x, yOf(e)); });
+  const outline = new Path2D(); P.e.forEach((e, i) => { const x = x0 + (x1 - x0) * i / n; i ? outline.lineTo(x, yOf(e)) : outline.moveTo(x, yOf(e)); });
+  ctx.lineTo(x1, bot); ctx.lineTo(x0, bot); ctx.closePath();
+  const g = ctx.createLinearGradient(0, top, 0, bot);
+  g.addColorStop(0, 'rgba(255,255,255,.75)'); g.addColorStop(1, 'rgba(255,255,255,.08)');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 3 * k; ctx.lineJoin = 'round'; ctx.stroke(outline);
+  // position marker
+  const t = Math.min(1, Math.max(0, d / track.total)), fi = t * n, i0 = Math.floor(fi), i1 = Math.min(n, i0 + 1);
+  const mx = x0 + (x1 - x0) * t, my = yOf(P.e[i0] + (P.e[i1] - P.e[i0]) * (fi - i0));
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 3 * k;
+  ctx.beginPath(); ctx.arc(mx, my, 11 * k, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // axis labels
+  ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 8 * k;
+  ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.font = `500 ${28 * k}px system-ui, sans-serif`;
+  ctx.textAlign = 'left'; ctx.fillText('0 km', x0, bot + 46 * k);
+  ctx.textAlign = 'right'; ctx.fillText(`${track.total.toFixed(1)} km`, x1, bot + 46 * k);
   ctx.restore();
 }
 
@@ -1391,7 +1420,6 @@ async function mapSnapshot(kind, cssW, cssH, padding, withPlaces = false) {
   let style;
   if (kind === 'sat') {
     style = buildStyle('satellite'); delete style.terrain; delete style.sky;
-    style.layers = style.layers.filter(l => l.id !== 'road-lines');
   } else style = `${OFM}/styles/liberty`;   // light street map (OpenFreeMap)
   const m = new maplibregl.Map({ container: el, style, interactive: false, attributionControl: false,
     preserveDrawingBuffer: true, pixelRatio: 2, fadeDuration: 0, center: [0, 0], zoom: 1 });
