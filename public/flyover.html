@@ -127,6 +127,11 @@
     <button class="chip" data-color="#ff6a1a"><i style="background:#ff6a1a"></i>Orange</button>
     <button class="chip" data-color="#ffffff"><i style="background:#fff"></i>White</button>
   </div>
+  <div class="chips">Card color:
+    <button class="chip on" data-theme="pastel"><i style="background:#dfe39a"></i>Pastel</button>
+    <button class="chip" data-theme="dark"><i style="background:#26331f;border:1px solid #556"></i>Dark</button>
+    <button class="chip" data-theme="sand"><i style="background:#e8dfd2"></i>Sand</button>
+  </div>
   <div id="cards"></div>
   <div id="shareBar">
     <button id="copyBtn" class="secondary">📋 Copy</button>
@@ -862,7 +867,14 @@ $('record').addEventListener('click', async () => {
 // Activity stickers (Story 1080x1920): transparent overlays + map card,
 // with Copy (clipboard) / Save (PNG) / Share (Web Share API).
 // =====================================================================
-let stickerColor = '#cdf227', stickerSel = 'route-stats', snapCache = null, snapPending = null;
+let stickerColor = '#cdf227', stickerSel = 'route-stats', cardTheme = 'pastel';
+// map snapshots for the map-based designs: satellite (Story size) and a light street map (card inset)
+let snaps = { sat: null, light: null, places: null }, snapsLoading = false;
+const CARD_THEMES = {
+  pastel: { bg: '#dfe39a', fg: '#25261d', sub: 'rgba(37,38,29,.68)', route: '#1d4ed8', accent: '#f26b1d' },
+  dark:   { bg: '#26331f', fg: '#f4f3e6', sub: 'rgba(244,243,230,.7)', route: '#cdf227', accent: '#cdf227' },
+  sand:   { bg: '#e8dfd2', fg: '#2a2620', sub: 'rgba(42,38,32,.68)', route: '#e4571b', accent: '#e4571b' }
+};
 
 // ---- activity summary from the GPX ----
 function activitySummary(t) {
@@ -912,14 +924,14 @@ const brandText = () => ($('brand').value || '').trim();
 function shadow(ctx, k, on = true) {
   ctx.shadowColor = on ? 'rgba(0,0,0,.4)' : 'transparent'; ctx.shadowBlur = on ? 10 * k : 0; ctx.shadowOffsetY = on ? 2 * k : 0;
 }
-function drawBrand(ctx, x, y, size, align = 'center') {
+function drawBrand(ctx, x, y, size, align = 'center', color = '#fff') {
   const b = brandText();
   ctx.font = `800 ${size}px ${FONT_BRAND}`;
   const tw = b ? ctx.measureText(b).width : 0;
   const lh = size * 1.3, lw = logoImg ? lh * logoImg.naturalWidth / logoImg.naturalHeight : 0, gap = logoImg && b ? size * 0.3 : 0;
   const total = lw + gap + tw, x0 = align === 'center' ? x - total / 2 : align === 'right' ? x - total : x;
   if (logoImg) ctx.drawImage(logoImg, x0, y - size * 0.37 - lh / 2, lw, lh);
-  ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
+  ctx.textAlign = 'left'; ctx.fillStyle = color;
   if (b) ctx.fillText(b, x0 + lw + gap, y);
 }
 // route projected (web mercator) into a box, keeping its shape
@@ -1015,12 +1027,12 @@ const TEMPLATES = [
       ctx.fillStyle = '#fff'; ctx.font = `600 ${62 * k}px ${FONT_NUM}`; ctx.fillText(it.value, x, y + 66 * k);
     });
   } },
-  { id: 'map', name: 'Map card', needsMap: true, draw(ctx, W, H, a) {
+  { id: 'map', name: 'Satellite card', needsMap: 'sat', draw(ctx, W, H, a) {
     const k = W / 1080;
-    if (!snapCache) { ctx.fillStyle = '#1b2230'; ctx.fillRect(0, 0, W, H); return; }
-    ctx.drawImage(snapCache.canvas, 0, 0, W, H);
+    if (!snaps.sat) { ctx.fillStyle = '#1b2230'; ctx.fillRect(0, 0, W, H); return; }
+    ctx.drawImage(snaps.sat.canvas, 0, 0, W, H);
     // route on top of the snapshot, in the chosen colour (dark casing for contrast)
-    const pts = snapCache.pts.map(([x, y]) => [x * W, y * H]);
+    const pts = snaps.sat.pts.map(([x, y]) => [x * W, y * H]);
     ctx.save(); ctx.lineJoin = ctx.lineCap = 'round';
     ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 14 * k;
     ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke();
@@ -1039,28 +1051,166 @@ const TEMPLATES = [
     drawBrand(ctx, W - 60 * k, 140 * k, 40 * k, 'right');
     ctx.textAlign = 'right'; ctx.font = `${18 * k}px system-ui, sans-serif`; ctx.fillStyle = 'rgba(255,255,255,.7)';
     ctx.fillText(ATTRIB.satellite, W - 24 * k, H - 22 * k);
+  } },
+  { id: 'card-title', name: 'Title card', draw(ctx, W, H, a) {
+    const k = W / 1080, T = CARD_THEMES[cardTheme];
+    const x = 60 * k, y = 430 * k, w = 960 * k, h = 1060 * k, pad = 72 * k;
+    cardBase(ctx, x, y, w, h, k, T);
+    drawBrand(ctx, x + pad, y + pad + 34 * k, 40 * k, 'left', T.fg);
+    // big title, wrapped to at most 3 lines
+    let size = 96 * k, lines;
+    do { ctx.font = `800 ${size}px ${FONT_BRAND}`; lines = wrapLines(ctx, activityTitle(a), w - 2 * pad); size -= 6 * k; } while (lines.length > 3 && size > 50 * k);
+    size += 6 * k;
+    ctx.fillStyle = T.fg; ctx.textAlign = 'left';
+    lines = lines.slice(0, 3);
+    lines.forEach((l, i) => ctx.fillText(l, x + pad, y + pad + 70 * k + (i + 1) * size * 1.08));
+    // route in the right half, between the title and the second stats row
+    const top = Math.max(y + h * 0.4, y + pad + 70 * k + lines.length * size * 1.08 + 50 * k), bottom = y + h - 270 * k;
+    strokeRouteCased(ctx, routePath({ x: x + w * 0.5, y: top, w: w * 0.5 - pad, h: Math.max(80 * k, bottom - top) }), 9 * k, T.route);
+    cardStats(ctx, a, x + pad, x + w * 0.5, y + h - 330 * k, k, T);
+  } },
+  { id: 'card-map', name: 'Map card', needsMap: 'light', draw(ctx, W, H, a) {
+    const k = W / 1080, T = CARD_THEMES[cardTheme];
+    const x = 60 * k, y = 380 * k, w = 960 * k, h = 1160 * k, pad = 60 * k;
+    cardBase(ctx, x, y, w, h, k, T);
+    const ix = x + pad, iy = y + pad, iw = w - 2 * pad, ih = 560 * k;
+    // map inset (light street map) with the route
+    ctx.save();
+    ctx.beginPath(); ctx.roundRect(ix, iy, iw, ih, 40 * k); ctx.clip();
+    let pts;
+    if (snaps.light) {
+      ctx.drawImage(snaps.light.canvas, ix, iy, iw, ih);
+      pts = snaps.light.pts.map(([px, py]) => [ix + px * iw, iy + py * ih]);
+    } else {
+      ctx.fillStyle = 'rgba(0,0,0,.06)'; ctx.fillRect(ix, iy, iw, ih);
+      pts = routePath({ x: ix + 40 * k, y: iy + 40 * k, w: iw - 80 * k, h: ih - 80 * k });
+    }
+    strokeRouteCased(ctx, pts, 7 * k, T.route);
+    if (snaps.light) {
+      ctx.font = `${15 * k}px system-ui, sans-serif`; ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.textAlign = 'left';
+      ctx.fillText('© OpenStreetMap · OpenFreeMap', ix + 14 * k, iy + ih - 12 * k);
+    }
+    ctx.restore();
+    // decorative rings in the accent colour, cut off by the card edge
+    ctx.save();
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 64 * k); ctx.clip();
+    ctx.strokeStyle = T.accent; ctx.lineWidth = 26 * k;
+    for (const r of [70, 125, 180]) { ctx.beginPath(); ctx.arc(x + w - 10 * k, iy + ih + 10 * k, r * k, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.restore();
+    drawBrand(ctx, x + pad + 12 * k, iy + ih + 110 * k, 40 * k, 'left', T.fg);
+    cardStats(ctx, a, x + pad + 12 * k, x + w * 0.5, iy + ih + 230 * k, k, T);
   } }
 ];
 
-// ---- top-down satellite snapshot (separate hidden map, 540x960 @2x = 1080x1920) ----
-async function mapSnapshot() {
+// ---- card helpers ----
+function cardBase(ctx, x, y, w, h, k, T) {
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,.25)'; ctx.shadowBlur = 30 * k; ctx.shadowOffsetY = 8 * k;
+  ctx.fillStyle = T.bg; ctx.beginPath(); ctx.roundRect(x, y, w, h, 64 * k); ctx.fill();
+  ctx.restore();
+}
+function wrapLines(ctx, text, maxW) {
+  const lines = []; let cur = '';
+  for (const word of text.split(/\s+/)) {
+    const t = cur ? cur + ' ' + word : word;
+    if (!cur || ctx.measureText(t).width <= maxW) cur = t; else { lines.push(cur); cur = word; }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+// "From A to B" from the nearest named places at start/finish (OpenStreetMap), else the activity name
+function activityTitle(a) {
+  const p = snaps.places;
+  if (p && p.from && p.to) return p.from === p.to ? `Loop from ${p.from}` : `From ${p.from} to ${p.to}`;
+  return a.name;
+}
+function strokeRouteCased(ctx, pts, width, color) {
+  ctx.save();
+  ctx.lineJoin = ctx.lineCap = 'round';
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = width * 2;
+  ctx.beginPath(); pts.forEach(([px, py], i) => i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)); ctx.stroke();
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
+  const [ex, ey] = pts[pts.length - 1];
+  ctx.fillStyle = color; ctx.strokeStyle = '#fff'; ctx.lineWidth = width * 0.6;
+  ctx.beginPath(); ctx.arc(ex, ey, width * 1.3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+// distance big on top, then two more stats side by side
+function cardStats(ctx, a, x0, x1, y, k, T) {
+  const items = statList(a);
+  const pick = ['Time', 'Speed', 'Elev Gain', 'Max Elev'].map(l => items.find(i => i.label === l)).filter(Boolean);
+  const rest = pick.slice(0, 2);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = T.fg; ctx.font = `800 ${72 * k}px ${FONT_BRAND}`; ctx.fillText(items[0].value, x0, y);
+  ctx.fillStyle = T.sub; ctx.font = `500 ${34 * k}px system-ui, sans-serif`; ctx.fillText(items[0].label, x0, y + 50 * k);
+  rest.forEach((it, i) => {
+    const x = i ? x1 : x0;
+    ctx.fillStyle = T.fg; ctx.font = `800 ${60 * k}px ${FONT_BRAND}`; ctx.fillText(it.value, x, y + 160 * k);
+    ctx.fillStyle = T.sub; ctx.font = `500 ${34 * k}px system-ui, sans-serif`; ctx.fillText(it.label, x, y + 206 * k);
+  });
+}
+
+// ---- map snapshots on a separate hidden map (pixelRatio 2) ----
+const PLACE_CLASSES = ['city', 'town', 'village', 'suburb', 'quarter', 'neighbourhood', 'hamlet'];
+async function mapSnapshot(kind, cssW, cssH, padding, withPlaces = false) {
   const el = document.createElement('div');
-  el.style.cssText = 'position:fixed;left:-20000px;top:0;width:540px;height:960px;';
+  el.style.cssText = `position:fixed;left:-20000px;top:0;width:${cssW}px;height:${cssH}px;`;
   document.body.appendChild(el);
-  const style = buildStyle('satellite'); delete style.terrain; delete style.sky;
-  style.layers = style.layers.filter(l => l.id !== 'road-lines');
+  let style;
+  if (kind === 'sat') {
+    style = buildStyle('satellite'); delete style.terrain; delete style.sky;
+    style.layers = style.layers.filter(l => l.id !== 'road-lines');
+  } else style = `${OFM}/styles/liberty`;   // light street map (OpenFreeMap)
   const m = new maplibregl.Map({ container: el, style, interactive: false, attributionControl: false,
     preserveDrawingBuffer: true, pixelRatio: 2, fadeDuration: 0, center: [0, 0], zoom: 1 });
+  m.on('error', e => console.warn('snapshot map:', e.error && e.error.message));   // e.g. one tile failing
   try {
-    await new Promise((res, rej) => { m.once('load', res); m.once('error', e => rej(e.error || e)); });
-    const cam = m.cameraForBounds(trackBounds(), { padding: { top: 260, bottom: 400, left: 50, right: 50 } });
-    m.jumpTo(cam);
+    await Promise.race([new Promise(r => m.once('load', r)), sleep(20000).then(() => { throw new Error('map load timeout'); })]);
+    m.jumpTo(m.cameraForBounds(trackBounds(), { padding }));
     await Promise.race([new Promise(r => m.once('idle', r)), sleep(25000)]);
-    const c = document.createElement('canvas'); c.width = 1080; c.height = 1920;
-    c.getContext('2d').drawImage(m.getCanvas(), 0, 0, 1080, 1920);
-    const pts = track.drawIdx.map(i => { const p = m.project([track.coords[i][0], track.coords[i][1]]); return [p.x / 540, p.y / 960]; });
-    return { canvas: c, pts };
+    const c = document.createElement('canvas'); c.width = cssW * 2; c.height = cssH * 2;
+    c.getContext('2d').drawImage(m.getCanvas(), 0, 0, c.width, c.height);
+    const pts = track.drawIdx.map(i => { const p = m.project([track.coords[i][0], track.coords[i][1]]); return [p.x / cssW, p.y / cssH]; });
+    return { canvas: c, pts, places: withPlaces ? await lookupPlaces(m) : null };
   } finally { m.remove(); el.remove(); }
+}
+// reverse-geocode start/finish: look at the snapshot map's place labels (OpenStreetMap) around
+// each point at neighbourhood zoom, and take the nearest named place
+async function lookupPlaces(m) {
+  const out = {};
+  for (const [key, c] of [['from', track.coords[0]], ['to', track.coords[track.coords.length - 1]]]) {
+    m.jumpTo({ center: [c[0], c[1]], zoom: 13, bearing: 0, pitch: 0 });
+    await Promise.race([new Promise(r => m.once('idle', r)), sleep(10000)]);
+    const feats = [];
+    for (const [id, src] of Object.entries(m.getStyle().sources))
+      if (src.type === 'vector') { try { feats.push(...m.querySourceFeatures(id, { sourceLayer: 'place' })); } catch {} }
+    let best = null, bd = Infinity;
+    for (const f of feats) {
+      if (f.geometry.type !== 'Point' || !f.properties.name || !PLACE_CLASSES.includes(f.properties.class)) continue;
+      const d = haversine([c[0], c[1]], f.geometry.coordinates);
+      if (d < bd) { bd = d; best = f; }
+    }
+    out[key] = best && bd < 8 ? best.properties.name : null;
+  }
+  return out;
+}
+async function runSnapshots(forTrack) {
+  snapsLoading = true;
+  try {
+    try {
+      const s1 = await mapSnapshot('sat', 540, 960, { top: 260, bottom: 400, left: 50, right: 50 }, true);
+      if (track !== forTrack) return;
+      snaps.sat = s1; snaps.places = s1.places;
+      refreshStickers();
+    } catch (e) { console.warn('satellite snapshot failed', e); }
+    try {
+      const s2 = await mapSnapshot('light', 420, 280, 30);
+      if (track !== forTrack) return;
+      snaps.light = s2;
+    } catch (e) { console.warn('street map snapshot failed', e); }
+  } finally {
+    if (track === forTrack) { snapsLoading = false; refreshStickers(); }
+  }
 }
 
 // ---- cards UI ----
@@ -1075,7 +1225,7 @@ function refreshStickers(newTrack = false) {
   $('share').hidden = false;
   const a = activitySummary(track);
   $('actInfo').textContent = `${a.name}${a.start ? ' · ' + fmtDate(a.start) : ''} — pick a design, then Copy / Save / Share. Transparent stickers can be placed on a photo or an Instagram Story.`;
-  if (newTrack) { snapCache = null; snapPending = null; }
+  if (newTrack) { snaps = { sat: null, light: null, places: null }; runSnapshots(track); }
   const cards = $('cards');
   cards.innerHTML = '';
   for (const tpl of TEMPLATES) {
@@ -1085,28 +1235,26 @@ function refreshStickers(newTrack = false) {
     tpl.draw(cv.getContext('2d'), 360, 640, a);
     card.append(cv);
     const lab = document.createElement('span'); lab.textContent = tpl.name; card.append(lab);
-    if (tpl.needsMap && !snapCache) { const w = document.createElement('div'); w.className = 'wait'; w.textContent = 'loading map…'; card.append(w); }
+    if (tpl.needsMap && !snaps[tpl.needsMap] && snapsLoading) { const w = document.createElement('div'); w.className = 'wait'; w.textContent = 'loading map…'; card.append(w); }
     card.onclick = () => { stickerSel = tpl.id; for (const el of cards.children) el.classList.toggle('sel', el === card); };
     cards.append(card);
   }
-  if (!snapCache && !snapPending) {
-    const forTrack = track;
-    snapPending = mapSnapshot()
-      .then(r => { if (track === forTrack) { snapCache = r; refreshStickers(); } })
-      .catch(err => { console.warn('map snapshot failed', err); })
-      .finally(() => { snapPending = null; });
-  }
 }
-document.querySelectorAll('#share .chip').forEach(b => b.onclick = () => {
+document.querySelectorAll('#share .chip[data-color]').forEach(b => b.onclick = () => {
   stickerColor = b.dataset.color;
-  document.querySelectorAll('#share .chip').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('#share .chip[data-color]').forEach(x => x.classList.toggle('on', x === b));
+  refreshStickers();
+});
+document.querySelectorAll('#share .chip[data-theme]').forEach(b => b.onclick = () => {
+  cardTheme = b.dataset.theme;
+  document.querySelectorAll('#share .chip[data-theme]').forEach(x => x.classList.toggle('on', x === b));
   refreshStickers();
 });
 
 const shareMsg = t => { $('shareMsg').textContent = t; };
 function selectedSticker() {
   const tpl = TEMPLATES.find(t => t.id === stickerSel);
-  if (tpl.needsMap && !snapCache) { shareMsg('The map is still loading, one moment…'); return null; }
+  if (tpl.needsMap && !snaps[tpl.needsMap] && snapsLoading) { shareMsg('The map is still loading, one moment…'); return null; }
   return { tpl, canvas: drawTemplate(tpl, 1080, 1920) };
 }
 const fileName = id => `${(brandText() || 'gowes').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${id}.png`;
