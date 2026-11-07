@@ -120,18 +120,18 @@
 </div>
 <div id="download"></div>
 <section id="share" hidden>
-  <h2>Stiker aktivitas</h2>
+  <h2>Activity stickers</h2>
   <p class="muted" id="actInfo"></p>
-  <div class="chips">Warna rute:
+  <div class="chips">Route color:
     <button class="chip on" data-color="#cdf227"><i style="background:#cdf227"></i>Lime</button>
-    <button class="chip" data-color="#ff6a1a"><i style="background:#ff6a1a"></i>Oranye</button>
-    <button class="chip" data-color="#ffffff"><i style="background:#fff"></i>Putih</button>
+    <button class="chip" data-color="#ff6a1a"><i style="background:#ff6a1a"></i>Orange</button>
+    <button class="chip" data-color="#ffffff"><i style="background:#fff"></i>White</button>
   </div>
   <div id="cards"></div>
   <div id="shareBar">
-    <button id="copyBtn" class="secondary">📋 Salin</button>
-    <button id="saveBtn" class="secondary">⬇ Simpan</button>
-    <button id="shareBtn">📤 Bagikan</button>
+    <button id="copyBtn" class="secondary">📋 Copy</button>
+    <button id="saveBtn" class="secondary">⬇ Save</button>
+    <button id="shareBtn">📤 Share</button>
   </div>
   <div id="shareMsg"></div>
 </section>
@@ -841,7 +841,7 @@ $('record').addEventListener('click', async () => {
     const canShareVideo = !!(navigator.canShare && navigator.canShare({ files: [vfile] }));
     $('download').innerHTML = `<video src="${url}" controls playsinline></video><div class="row">
       <a href="${url}" download="flyover-gowesementara.mp4">⬇ Download video</a>
-      ${canShareVideo ? '<button id="shareVideo">📤 Bagikan video</button>' : ''}</div>`;
+      ${canShareVideo ? '<button id="shareVideo">📤 Share video</button>' : ''}</div>`;
     if (canShareVideo) $('shareVideo').onclick = () => navigator.share({ files: [vfile] }).catch(() => {});
     const warn = incomplete ? ` ⚠ ${incomplete} frame tile petanya belum lengkap (koneksi lambat), coba generate ulang.` : '';
     status(`Selesai! ${W}×${H} @ ${fps}fps, ${(frames.length / fps).toFixed(1)} detik, ${(blob.size/1e6).toFixed(1)} MB. ${frames.info.note}${warn}`);
@@ -885,7 +885,7 @@ function activitySummary(t) {
   const hrs = c.map(p => p[4]).filter(v => v != null);
   const start = hasTime ? new Date(c[0][3]) : null;
   const h = start ? start.getHours() : 7;
-  const defName = h < 11 ? 'Gowes Pagi' : h < 15 ? 'Gowes Siang' : h < 18 ? 'Gowes Sore' : 'Gowes Malam';
+  const defName = h < 5 ? 'Night Ride' : h < 11 ? 'Morning Ride' : h < 14 ? 'Lunch Ride' : h < 18 ? 'Afternoon Ride' : h < 21 ? 'Evening Ride' : 'Night Ride';
   return {
     km: t.total, hasEle, gain, maxEle, moving: moving || null,
     kmh: moving ? t.total / (moving / 3600) : null,
@@ -895,15 +895,15 @@ function activitySummary(t) {
   };
 }
 const fmtDur = sec => { const s = Math.round(sec), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60;
-  return h ? `${h}j ${m}m` : `${m}m ${s % 60}d`; };
-const fmtDate = d => d ? d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }) : '';
+  return h ? `${h}h ${m}m` : `${m}m ${s % 60}s`; };
+const fmtDate = d => d ? d.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }) : '';
 function statList(a) {
-  const out = [{ label: 'Jarak', value: `${a.km.toFixed(2)} km` }];
-  if (a.hasEle) out.push({ label: 'Tanjakan', value: `${Math.round(a.gain)} m` });
-  if (a.moving) out.push({ label: 'Waktu', value: fmtDur(a.moving) });
-  if (a.kmh) out.push({ label: 'Kecepatan', value: `${a.kmh.toFixed(1)} km/h` });
-  if (a.hasEle) out.push({ label: 'Elev. Maks', value: `${Math.round(a.maxEle)} m` });
-  if (a.avgHr) out.push({ label: 'Detak Jantung', value: `${Math.round(a.avgHr)} bpm` });
+  const out = [{ label: 'Distance', value: `${a.km.toFixed(2)} km` }];
+  if (a.hasEle) out.push({ label: 'Elev Gain', value: `${Math.round(a.gain)} m` });
+  if (a.moving) out.push({ label: 'Time', value: fmtDur(a.moving) });
+  if (a.kmh) out.push({ label: 'Speed', value: `${a.kmh.toFixed(1)} km/h` });
+  if (a.hasEle) out.push({ label: 'Max Elev', value: `${Math.round(a.maxEle)} m` });
+  if (a.avgHr) out.push({ label: 'Avg HR', value: `${Math.round(a.avgHr)} bpm` });
   return out;
 }
 
@@ -963,13 +963,13 @@ function bikeIcon(ctx, x, y, s, color = '#fff') {   // simple bicycle outline
 
 // ---- templates: draw(ctx, W, H, activity) ----
 const TEMPLATES = [
-  { id: 'route-stats', name: 'Rute + statistik', draw(ctx, W, H, a) {
+  { id: 'route-stats', name: 'Route + stats', draw(ctx, W, H, a) {
     const k = W / 1080; shadow(ctx, k);
     strokeRoute(ctx, routePath({ x: 170 * k, y: 330 * k, w: 740 * k, h: 1000 * k }), 11 * k, stickerColor);
     drawBrand(ctx, W / 2, 1480 * k, 56 * k);
     statColumns(ctx, statList(a).slice(0, 3), 60 * k, W - 60 * k, 1570 * k, k);
   } },
-  { id: 'stack', name: 'Statistik', draw(ctx, W, H, a) {
+  { id: 'stack', name: 'Stats', draw(ctx, W, H, a) {
     const k = W / 1080; shadow(ctx, k);
     const items = statList(a), step = 150 * k, y0 = H / 2 - (items.length * step) / 2 + 60 * k;
     drawBrand(ctx, W / 2, y0 - 70 * k, 52 * k);
@@ -979,15 +979,15 @@ const TEMPLATES = [
       ctx.fillStyle = '#fff'; ctx.font = `600 ${84 * k}px ${FONT_NUM}`; ctx.fillText(it.value, W / 2, y + 86 * k);
     });
   } },
-  { id: 'route', name: 'Rute saja', draw(ctx, W, H, a) {
+  { id: 'route', name: 'Route only', draw(ctx, W, H, a) {
     const k = W / 1080; shadow(ctx, k);
     strokeRoute(ctx, routePath({ x: 210 * k, y: 420 * k, w: 660 * k, h: 980 * k }), 12 * k, stickerColor);
     drawBrand(ctx, W / 2, 1530 * k, 44 * k);
   } },
-  { id: 'pills', name: 'Pil ringkas', draw(ctx, W, H, a) {
+  { id: 'pills', name: 'Pills', draw(ctx, W, H, a) {
     const k = W / 1080; shadow(ctx, k, false);
     const st = statList(a).map(s => `${s.label} ${s.value}`.toUpperCase());
-    const rows = [[brandText().toUpperCase() || 'GOWES', a.start ? a.start.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }).toUpperCase() : null].filter(Boolean)];
+    const rows = [[brandText().toUpperCase() || 'GOWES', a.start ? a.start.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }).toUpperCase() : null].filter(Boolean)];
     for (let i = 0; i < st.length; i += 2) rows.push(st.slice(i, i + 2));
     const ph = 64 * k, gap = 14 * k, pad = 24 * k, y0 = H / 2 - (rows.length * (ph + gap)) / 2;
     ctx.font = `600 ${34 * k}px ${FONT_NUM}`;
@@ -1015,7 +1015,7 @@ const TEMPLATES = [
       ctx.fillStyle = '#fff'; ctx.font = `600 ${62 * k}px ${FONT_NUM}`; ctx.fillText(it.value, x, y + 66 * k);
     });
   } },
-  { id: 'map', name: 'Kartu peta', needsMap: true, draw(ctx, W, H, a) {
+  { id: 'map', name: 'Map card', needsMap: true, draw(ctx, W, H, a) {
     const k = W / 1080;
     if (!snapCache) { ctx.fillStyle = '#1b2230'; ctx.fillRect(0, 0, W, H); return; }
     ctx.drawImage(snapCache.canvas, 0, 0, W, H);
@@ -1074,7 +1074,7 @@ function refreshStickers(newTrack = false) {
   if (!track) return;
   $('share').hidden = false;
   const a = activitySummary(track);
-  $('actInfo').textContent = `${a.name}${a.start ? ' · ' + fmtDate(a.start) : ''} — pilih desain, lalu Salin / Simpan / Bagikan. Stiker transparan bisa ditempel di foto atau Instagram Story.`;
+  $('actInfo').textContent = `${a.name}${a.start ? ' · ' + fmtDate(a.start) : ''} — pick a design, then Copy / Save / Share. Transparent stickers can be placed on a photo or an Instagram Story.`;
   if (newTrack) { snapCache = null; snapPending = null; }
   const cards = $('cards');
   cards.innerHTML = '';
@@ -1085,7 +1085,7 @@ function refreshStickers(newTrack = false) {
     tpl.draw(cv.getContext('2d'), 360, 640, a);
     card.append(cv);
     const lab = document.createElement('span'); lab.textContent = tpl.name; card.append(lab);
-    if (tpl.needsMap && !snapCache) { const w = document.createElement('div'); w.className = 'wait'; w.textContent = 'memuat peta…'; card.append(w); }
+    if (tpl.needsMap && !snapCache) { const w = document.createElement('div'); w.className = 'wait'; w.textContent = 'loading map…'; card.append(w); }
     card.onclick = () => { stickerSel = tpl.id; for (const el of cards.children) el.classList.toggle('sel', el === card); };
     cards.append(card);
   }
@@ -1106,7 +1106,7 @@ document.querySelectorAll('#share .chip').forEach(b => b.onclick = () => {
 const shareMsg = t => { $('shareMsg').textContent = t; };
 function selectedSticker() {
   const tpl = TEMPLATES.find(t => t.id === stickerSel);
-  if (tpl.needsMap && !snapCache) { shareMsg('Peta masih dimuat, tunggu sebentar…'); return null; }
+  if (tpl.needsMap && !snapCache) { shareMsg('The map is still loading, one moment…'); return null; }
   return { tpl, canvas: drawTemplate(tpl, 1080, 1920) };
 }
 const fileName = id => `${(brandText() || 'gowes').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${id}.png`;
@@ -1118,9 +1118,9 @@ $('copyBtn').onclick = async () => {
     if (!navigator.clipboard || !window.ClipboardItem) throw new Error('unsupported');
     // pass the promise directly so Safari keeps the user gesture
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': toBlob(s.canvas) })]);
-    shareMsg('Tersalin ✓ — tempel (paste) di Instagram Story, WhatsApp, atau aplikasi edit foto.');
+    shareMsg('Copied ✓ — paste it into an Instagram Story, WhatsApp or a photo editor.');
   } catch (e) {
-    shareMsg('Browser ini belum bisa menyalin gambar. Pakai Simpan atau Bagikan.');
+    shareMsg('This browser can’t copy images yet. Use Save or Share instead.');
   }
 };
 $('saveBtn').onclick = async () => {
@@ -1128,14 +1128,14 @@ $('saveBtn').onclick = async () => {
   const url = URL.createObjectURL(await toBlob(s.canvas));
   const a = document.createElement('a'); a.href = url; a.download = fileName(s.tpl.id); a.click();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
-  shareMsg('Tersimpan ✓ (PNG 1080×1920).');
+  shareMsg('Saved ✓ (PNG 1080×1920).');
 };
 $('shareBtn').onclick = async () => {
   const s = selectedSticker(); if (!s) return;
   const file = new File([await toBlob(s.canvas)], fileName(s.tpl.id), { type: 'image/png' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try { await navigator.share({ files: [file] }); shareMsg(''); } catch { /* cancelled */ }
-  } else shareMsg('Bagikan langsung hanya tersedia di HP (Chrome/Safari). Pakai Simpan lalu unggah manual.');
+  } else shareMsg('Direct sharing works on phones (Chrome/Safari). On this device, use Save and upload it manually.');
 };
 loadFonts().then(() => { if (track) refreshStickers(); });
 
