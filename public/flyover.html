@@ -117,19 +117,51 @@ const STYLES = {
 };
 // colour of the distant haze; also fills the gap between the farthest terrain and the sky
 const HAZE = '#7ea9de';
-const ATTRIB = { satellite: 'Imagery © Esri', streets: '© OpenStreetMap contributors' };
+const ATTRIB = { satellite: 'Imagery © Esri · © OpenStreetMap · OpenFreeMap', streets: '© OpenStreetMap contributors' };
+// free vector tiles (OpenStreetMap data, OpenMapTiles schema) for crisp road/place names
+const OFM = 'https://tiles.openfreemap.org';
+const ROAD_CLASSES = ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service'];
+
+// Road and place names drawn as real text: upright towards the camera (not squashed on the
+// ground like raster labels at high pitch), white with a dark halo so they read on imagery.
+function labelLayers() {
+  const halo = { 'text-color':'#ffffff', 'text-halo-color':'rgba(0,0,0,0.85)', 'text-halo-width':1.8, 'text-halo-blur':0.3 };
+  return [
+    { id:'road-lines', type:'line', source:'omt', 'source-layer':'transportation',
+      filter: ['match', ['get','class'], ROAD_CLASSES, true, false],
+      layout: { 'line-cap':'round', 'line-join':'round' },
+      paint: { 'line-color':'rgba(255,255,255,0.4)',
+        'line-width': ['interpolate', ['exponential', 1.6], ['zoom'],
+          12, ['match', ['get','class'], ['motorway','trunk','primary'], 1.4, 0.5],
+          18, ['match', ['get','class'], ['motorway','trunk','primary'], 10, ['secondary','tertiary'], 7, 4]] } },
+    { id:'road-names', type:'symbol', source:'omtlabels', 'source-layer':'transportation_name',
+      filter: ['all', ['has','name'], ['match', ['get','class'], ROAD_CLASSES, true, false]],
+      layout: { 'symbol-placement':'line', 'text-field':['get','name'], 'text-font':['Noto Sans Bold'],
+        'text-size': ['match', ['get','class'], ['motorway','trunk','primary','secondary'], 17, 15],
+        'text-pitch-alignment':'viewport', 'text-rotation-alignment':'map', 'text-keep-upright':true,
+        'text-max-angle':35, 'symbol-spacing':280, 'text-padding':6, 'text-letter-spacing':0.02 },
+      paint: halo },
+    { id:'place-names', type:'symbol', source:'omtlabels', 'source-layer':'place',
+      filter: ['all', ['has','name'], ['match', ['get','class'], ['city','town','village','suburb','quarter','neighbourhood','hamlet'], true, false]],
+      layout: { 'text-field':['get','name'], 'text-font':['Noto Sans Bold'],
+        'text-size': ['match', ['get','class'], 'city', 22, 'town', 19, ['village','suburb'], 17, 15],
+        'text-pitch-alignment':'viewport', 'text-padding':8, 'text-max-width':8, 'text-letter-spacing':0.03 },
+      paint: { ...halo, 'text-color':'#fff7d6', 'text-halo-width':2 } }
+  ];
+}
 
 function buildStyle(kind) {
   return {
     version: 8,
     transition: { duration: 0, delay: 0 },
+    glyphs: `${OFM}/fonts/{fontstack}/{range}.pbf`,
     sources: {
       base: STYLES[kind],
       ...(kind === 'satellite' ? {
-        roads: { type:'raster', tileSize:256, maxzoom:19,
-          tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}'] },
-        places: { type:'raster', tileSize:256, maxzoom:19,
-          tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'] }
+        // same tiles twice: 'omt' (road lines, normal detail levels) and 'omtlabels' (names,
+        // locked to one detail level near the camera, see patchCoveringTiles)
+        omt: { type:'vector', url:`${OFM}/planet` },
+        omtlabels: { type:'vector', url:`${OFM}/planet` }
       } : {}),
       dem: { type:'raster-dem', encoding:'terrarium', tileSize:256, maxzoom:13,
         tiles:['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'] }
@@ -143,11 +175,8 @@ function buildStyle(kind) {
       { id:'bg', type:'background', paint:{ 'background-color':'#2d3b2a' } },
       // no fade: every frame shows fully loaded tiles, no cross-fade flicker
       { id:'base', type:'raster', source:'base', paint:{ 'raster-fade-duration': 0 } },
-      // road + place names on top of satellite imagery
-      ...(kind === 'satellite' ? [
-        { id:'roads', type:'raster', source:'roads', paint:{ 'raster-fade-duration': 0 } },
-        { id:'places', type:'raster', source:'places', paint:{ 'raster-fade-duration': 0 } }
-      ] : [])
+      // road lines + road/place names on top of satellite imagery
+      ...(kind === 'satellite' ? labelLayers() : [])
     ],
     terrain: { source:'dem', exaggeration:1.4 }
   };
@@ -284,8 +313,9 @@ function addLayers() {
   map.addSource('done', { type:'geojson', data: { type:'FeatureCollection', features:[] } });
   map.addSource('head', { type:'geojson', data: { type:'FeatureCollection', features:[] } });
   const lineLayout = { 'line-cap':'round', 'line-join':'round' };
-  map.addLayer({ id:'full', type:'line', source:'full', paint:{ 'line-color':ROUTE_COLOR, 'line-width':4, 'line-opacity':.85 }, layout: lineLayout });
-  map.addLayer({ id:'done', type:'line', source:'done', paint:{ 'line-color':ROUTE_COLOR, 'line-width':6 }, layout: lineLayout });
+  const below = map.getLayer('road-names') ? 'road-names' : undefined;   // keep names readable on top of the route
+  map.addLayer({ id:'full', type:'line', source:'full', paint:{ 'line-color':ROUTE_COLOR, 'line-width':4, 'line-opacity':.85 }, layout: lineLayout }, below);
+  map.addLayer({ id:'done', type:'line', source:'done', paint:{ 'line-color':ROUTE_COLOR, 'line-width':6 }, layout: lineLayout }, below);
   map.addLayer({ id:'head', type:'circle', source:'head', paint:{ 'circle-radius':10, 'circle-color':'#ef4058', 'circle-stroke-color':'#ffffff', 'circle-stroke-width':3 } });
 }
 // style JSON ready (tiles may still be loading) -> safe to add our sources/layers
@@ -445,12 +475,12 @@ function buildPlan(fps) {
 }
 
 // ---------- label tiles: one zoom level, limited distance ----------
-// With 3D terrain MapLibre draws far-away areas with lower-zoom tiles. Raster label tiles of each
-// zoom level contain different text, so while flying a road name would suddenly swap when its area
-// switches level. During playback the label sources therefore only use tiles of the highest level,
+// With 3D terrain MapLibre draws far-away areas with lower-zoom tiles. Label tiles of each zoom
+// level contain a different set of names at different positions, so while flying a road name would
+// suddenly jump or swap when its area switches level. During playback the label sources therefore only use tiles of the highest level,
 // and only up to LABEL_RANGE x the camera->centre distance (further away text is tiny and in the
 // horizon haze; covering everything up to the horizon at high pitch would need thousands of tiles).
-const LABEL_SOURCES = ['roads', 'places'];
+const LABEL_SOURCES = ['omtlabels'];
 const LABEL_MARK = 0.25;   // minzoom marker that identifies the label sources inside coveringTiles()
 const LABEL_RANGE = 4;
 let labelLock = false;
@@ -458,6 +488,8 @@ let labelLock = false;
 function markLabelSources() {
   for (const id of LABEL_SOURCES) { const src = map.getSource(id); if (src) src.minzoom = LABEL_MARK; }
 }
+// a vector source's TileJSON arrives later and resets minzoom: mark again once it is loaded
+map.on('sourcedata', e => { if (LABEL_SOURCES.includes(e.sourceId) && e.sourceDataType === 'metadata') markLabelSources(); });
 
 (function patchCoveringTiles() {
   const tr = map.transform, orig = tr.coveringTiles;
@@ -467,7 +499,9 @@ function markLabelSources() {
     if (!labelLock || !lod.length) return lod;
     // label level from the camera zoom (same rule as MapLibre's coveringZoomLevel), so it never
     // changes while the zoom is constant
-    const zMax = Math.min(opts.maxzoom, Math.max(0, Math.round(this.zoom + Math.log2(this.tileSize / opts.tileSize))));
+    const zFull = Math.max(0, (opts.roundZoom ? Math.round : Math.floor)(this.zoom + Math.log2(this.tileSize / opts.tileSize)));
+    const zMax = Math.min(opts.maxzoom, zFull);
+    const ovZ = opts.reparseOverscaled ? zFull : zMax;   // vector tiles beyond maxzoom are overscaled
     const n = 2 ** zMax;
     const cam = this.pointCoordinate(this.getCameraPoint());
     const ctr = maplibregl.MercatorCoordinate.fromLngLat(this.center);
@@ -479,8 +513,8 @@ function markLabelSources() {
       const x0 = t.canonical.x * sz + t.wrap * n, y0 = t.canonical.y * sz;
       const dx = Math.max(x0 - cx, 0, cx - (x0 + sz)), dy = Math.max(y0 - cy, 0, cy - (y0 + sz));
       if (Math.hypot(dx, dy) > range) return;           // too far: no labels there
-      if (t.canonical.z >= zMax) out.push(t);
-      else for (const c of t.children(opts.maxzoom)) expand(c);
+      if (t.canonical.z >= zMax) out.push(t.overscaledZ === ovZ ? t : new t.constructor(ovZ, t.wrap, t.canonical.z, t.canonical.x, t.canonical.y));
+      else for (const c of t.children(Infinity)) expand(c);
     };
     for (const t of lod) expand(t);
     return out;
@@ -661,7 +695,7 @@ $('preview').addEventListener('click', async () => {
 // until everything in view is loaded (or timeout). Returns true if fully loaded.
 // Render, and if tiles are missing wait for them WITHOUT rendering, then render again.
 // Usually 1-2 renders per video frame.
-const ALL_SOURCES = ['base', 'roads', 'places', 'dem', 'full', 'done', 'head'];
+const ALL_SOURCES = ['base', 'omt', 'omtlabels', 'dem', 'full', 'done', 'head'];
 async function renderReady(maxMs = 30000) {
   const t = performance.now();
   for (let pass = 0; pass < 30; pass++) {
