@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GPX Flyover</title>
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Montserrat:wght@800&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/mp4-muxer@5.1.3/build/mp4-muxer.js"></script>
 <style>
@@ -22,13 +25,13 @@
   button.secondary { background:#2a2f3a; }
   .file { background:var(--panel); border:1px dashed #3a4050; padding:8px 12px; border-radius:6px; cursor:pointer; font-size:14px; }
   .file input { display:none; }
-  #wrap { position:relative; width:100%; max-width:1280px; margin:0 auto; aspect-ratio:16/9; background:#000; overflow:hidden; }
+  #wrap { position:relative; width:100%; max-width:1280px; margin:0 auto; aspect-ratio:16/9; background:#7ea9de; overflow:hidden; }
   #wrap.vertical { aspect-ratio:9/16; max-width:420px; }
   /* map is laid out at a fixed "phone-like" size and scaled to fit, so preview == video */
   #map { position:absolute; left:0; top:0; transform-origin:0 0; }
-  #wrap.vertical #stats { left:50%; transform:translateX(-50%); bottom:22%; white-space:nowrap; }
-  #stats { position:absolute; left:12px; bottom:12px; background:rgba(0,0,0,.6); padding:8px 12px; border-radius:8px; font-size:14px; pointer-events:none; display:none; }
-  #stats b { font-size:20px; display:block; }
+  /* HUD (brand + stats) is drawn on a canvas with the same code as the video frames */
+  #hud { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  input[type=text] { background:var(--panel); color:var(--text); border:1px solid #2a2f3a; border-radius:6px; padding:6px; }
   #status { padding:8px 16px; color:var(--muted); font-size:13px; min-height:20px; }
   #bar { height:4px; background:#2a2f3a; margin:0 16px 8px; border-radius:2px; overflow:hidden; display:none; }
   #bar div { height:100%; width:0; background:var(--accent); }
@@ -78,7 +81,9 @@
   </label>
   <label title="Kalau rute terlalu panjang untuk durasinya, kamera mundur sedikit supaya gerakan tidak terlalu cepat">
     <input type="checkbox" id="readable" checked> Jaga nama jalan terbaca</label>
-  <label>Pitch <input type="number" id="pitch" value="50" min="0" max="80" style="width:56px"></label>
+  <label>Pitch <input type="number" id="pitch" value="75" min="0" max="80" style="width:56px"></label>
+  <label>Brand <input type="text" id="brand" value="Gowesementara" maxlength="40" style="width:150px"></label>
+  <label class="file">🖼 Logo (opsional)<input type="file" id="logo" accept="image/*"></label>
   <label>FPS
     <select id="fps">
       <option value="30">30</option>
@@ -92,7 +97,7 @@
 <div id="bar"><div></div></div>
 <div id="wrap">
   <div id="map"></div>
-  <div id="stats"><b id="sDist">0.00 km</b><span id="sSub">0 m</span></div>
+  <canvas id="hud"></canvas>
 </div>
 <div id="download"></div>
 
@@ -110,6 +115,8 @@ const STYLES = {
     tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
     attribution:'© OpenStreetMap contributors' }
 };
+// colour of the distant haze; also fills the gap between the farthest terrain and the sky
+const HAZE = '#7ea9de';
 const ATTRIB = { satellite: 'Imagery © Esri', streets: '© OpenStreetMap contributors' };
 
 function buildStyle(kind) {
@@ -127,8 +134,13 @@ function buildStyle(kind) {
       dem: { type:'raster-dem', encoding:'terrarium', tileSize:256, maxzoom:13,
         tiles:['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'] }
     },
+    // blue sky with a hazy horizon above the 3D terrain
+    sky: {
+      'sky-color': '#0b44bf', 'horizon-color': HAZE, 'fog-color': HAZE,
+      'sky-horizon-blend': 0.45, 'horizon-fog-blend': 0.5, 'fog-ground-blend': 0.85, 'atmosphere-blend': 0
+    },
     layers: [
-      { id:'sky', type:'background', paint:{ 'background-color':'#87b6e0' } },
+      { id:'bg', type:'background', paint:{ 'background-color':'#2d3b2a' } },
       // no fade: every frame shows fully loaded tiles, no cross-fade flicker
       { id:'base', type:'raster', source:'base', paint:{ 'raster-fade-duration': 0 } },
       // road + place names on top of satellite imagery
@@ -170,12 +182,13 @@ function applyLayout() {
   mapEl.style.transform = `scale(${sc})`;
   map.setPixelRatio(recordPR || Math.max(1, (window.devicePixelRatio || 1) * sc));
   map.resize();
+  if (typeof renderHud === 'function' && document.readyState !== 'loading') renderHud();
 }
 applyLayout();
 window.addEventListener('resize', applyLayout);
 $('format').addEventListener('change', () => {
   applyLayout();
-  if (track) map.fitBounds(trackBounds(), { padding: 40, pitch: 0, bearing: 0, duration: 0 });
+  if (track) map.fitBounds(trackBounds(), { padding: 40, pitch: 0, bearing: 0, duration: 0, freezeElevation: true });
 });
 
 // ---------- GPX parsing ----------
@@ -194,8 +207,11 @@ function parseGPX(text) {
   const raw = pts.map(p => {
     const ele = p.getElementsByTagName('ele')[0];
     const tm = p.getElementsByTagName('time')[0];
+    // heart rate lives in extensions, e.g. <gpxtpx:hr> (Garmin/Strava/COROS exports)
+    const hr = p.getElementsByTagNameNS('*', 'hr')[0];
     return [+p.getAttribute('lon'), +p.getAttribute('lat'),
-            ele ? +ele.textContent : 0, tm ? Date.parse(tm.textContent) : null];
+            ele ? +ele.textContent : 0, tm ? Date.parse(tm.textContent) : null,
+            hr && +hr.textContent > 0 ? +hr.textContent : null];
   }).filter(c => isFinite(c[0]) && isFinite(c[1]));
 
   // drop duplicate points (zero-length segments)
@@ -218,7 +234,8 @@ function parseGPX(text) {
   const midLat = drawIdx.reduce((a, i) => a + coords[i][1], 0) / drawIdx.length;
 
   // smooth path is (re)computed per plan, with a window that depends on the zoom
-  return { coords, cum, total, drawIdx, res, smooth: res, N, midLat };
+  const hasHr = coords.some(c => c[4] != null);
+  return { coords, cum, total, drawIdx, res, smooth: res, N, midLat, hasHr };
 }
 
 function movingAverage(arr, w) {
@@ -236,7 +253,8 @@ function interp(coords, cum, d) {
   const seg = cum[hi] - cum[lo] || 1, t = Math.min(1, Math.max(0, (d - cum[lo]) / seg));
   const a = coords[lo], b = coords[hi];
   return { idx: lo, lon: a[0]+(b[0]-a[0])*t, lat: a[1]+(b[1]-a[1])*t, ele: a[2]+(b[2]-a[2])*t,
-           time: a[3] != null && b[3] != null ? a[3]+(b[3]-a[3])*t : null };
+           time: a[3] != null && b[3] != null ? a[3]+(b[3]-a[3])*t : null,
+           hr: a[4] != null && b[4] != null ? a[4]+(b[4]-a[4])*t : (a[4] ?? b[4] ?? null) };
 }
 const pointAt = d => interp(track.coords, track.cum, d);
 
@@ -254,19 +272,21 @@ function bearing(a, b) {
 }
 
 // ---------- map layers ----------
+const ROUTE_COLOR = '#cdf227';
 const drawCoords = () => track.drawIdx.map(i => [track.coords[i][0], track.coords[i][1]]);
 
 function addLayers() {
+  markLabelSources();
   if (!track) return;
   const line = { type:'Feature', geometry:{ type:'LineString', coordinates: drawCoords() } };
   if (map.getSource('full')) { map.getSource('full').setData(line); return; }
   map.addSource('full', { type:'geojson', data: line });
   map.addSource('done', { type:'geojson', data: { type:'FeatureCollection', features:[] } });
   map.addSource('head', { type:'geojson', data: { type:'FeatureCollection', features:[] } });
-  map.addLayer({ id:'full', type:'line', source:'full', paint:{ 'line-color':'#ffffff', 'line-width':3, 'line-opacity':.55 }, layout:{ 'line-cap':'round', 'line-join':'round' } });
-  map.addLayer({ id:'done-glow', type:'line', source:'done', paint:{ 'line-color':'#fc4c02', 'line-width':10, 'line-opacity':.35, 'line-blur':4 } });
-  map.addLayer({ id:'done', type:'line', source:'done', paint:{ 'line-color':'#fc4c02', 'line-width':5 }, layout:{ 'line-cap':'round', 'line-join':'round' } });
-  map.addLayer({ id:'head', type:'circle', source:'head', paint:{ 'circle-radius':8, 'circle-color':'#fc4c02', 'circle-stroke-color':'#fff', 'circle-stroke-width':3, 'circle-pitch-alignment':'map' } });
+  const lineLayout = { 'line-cap':'round', 'line-join':'round' };
+  map.addLayer({ id:'full', type:'line', source:'full', paint:{ 'line-color':ROUTE_COLOR, 'line-width':4, 'line-opacity':.85 }, layout: lineLayout });
+  map.addLayer({ id:'done', type:'line', source:'done', paint:{ 'line-color':ROUTE_COLOR, 'line-width':6 }, layout: lineLayout });
+  map.addLayer({ id:'head', type:'circle', source:'head', paint:{ 'circle-radius':10, 'circle-color':'#ef4058', 'circle-stroke-color':'#ffffff', 'circle-stroke-width':3 } });
 }
 // style JSON ready (tiles may still be loading) -> safe to add our sources/layers
 let styleReady = false;
@@ -283,19 +303,29 @@ $('gpx').addEventListener('change', async e => {
   try {
     track = parseGPX(await f.text());
     await ensureLayers();
-    map.fitBounds(trackBounds(), { padding: 60, pitch: 0, bearing: 0, duration: 1500 });
+    map.fitBounds(trackBounds(), { padding: 60, pitch: 0, bearing: 0, duration: 1500, freezeElevation: true });
     $('preview').disabled = $('record').disabled = false;
-    status(`${f.name}: ${track.coords.length} titik, ${track.total.toFixed(2)} km`);
+    status(`${f.name}: ${track.coords.length} titik, ${track.total.toFixed(2)} km` + (track.hasHr ? ' · ada data detak jantung' : ''));
+    renderHud(statAt(0));
   } catch (err) { status('Gagal membaca GPX: ' + err.message); }
 });
 
-$('style').addEventListener('change', e => { styleReady = false; map.setStyle(buildStyle(e.target.value), { diff: false }); });
+$('style').addEventListener('change', e => { styleReady = false; map.setStyle(buildStyle(e.target.value), { diff: false }); renderHud(); });
+$('brand').addEventListener('input', () => renderHud());
+$('logo').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if (!f) { logoImg = null; return renderHud(); }
+  const img = new Image();
+  img.src = URL.createObjectURL(f);
+  try { await img.decode(); logoImg = img; } catch { logoImg = null; status('Logo tidak bisa dibaca, gunakan PNG/JPG.'); }
+  renderHud();
+});
 
 // make sure the route sources/layers exist (style may have been swapped or still loading)
 async function ensureLayers() {
   if (!styleReady) await new Promise(r => { const f = () => styleReady ? r() : setTimeout(f, 50); f(); });
   if (!map.getSource('done')) {
-    for (const id of ['head', 'done', 'done-glow', 'full']) if (map.getLayer(id)) map.removeLayer(id);
+    for (const id of ['head', 'done', 'full']) if (map.getLayer(id)) map.removeLayer(id);
     for (const id of ['full', 'done', 'head']) if (map.getSource(id)) map.removeSource(id);
   }
   addLayers();
@@ -334,7 +364,7 @@ const EXTRA_SEC = 0.6 + 3 + 3 + 2;
 function buildPlan(fps) {
   const f = fmt();
   map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
-  const topPad = Math.round(f.lh * (f.vertical ? 0.25 : 0.15));
+  const topPad = Math.round(f.lh * (f.vertical ? 0.3 : 0.2));
   const pad = t => ({ top: Math.round(topPad * t), bottom: 0, left: 0, right: 0 });
   const pitch = clamp(+$('pitch').value || 0, 0, 80);
   const total = track.total, L = total * 1000, lat = track.midLat;
@@ -376,9 +406,8 @@ function buildPlan(fps) {
   for (let i = bw.length - 2; i >= 0; i--) bw[i] = bw[i+1] + clamp(bw[i] - bw[i+1], -maxStep, maxStep);
   for (let i = 0; i < br.length; i++) br[i] = (fw[i] + bw[i]) / 2;
 
-  const stat = d => ({ d, ele: pointAt(d).ele, speed: speedAt(d) });
   const frames = [];
-  const push = (cam, d, showStats) => frames.push({ cam, d, stats: showStats ? stat(d) : null });
+  const push = (cam, d) => frames.push({ cam, d, stats: statAt(d) });
 
   const bounds = trackBounds();
   const ov = map.cameraForBounds(bounds, { padding: 40, bearing: 0 });
@@ -415,19 +444,48 @@ function buildPlan(fps) {
   return frames;
 }
 
-// ---------- label tiles: one zoom level only ----------
+// ---------- label tiles: one zoom level, limited distance ----------
 // With 3D terrain MapLibre draws far-away areas with lower-zoom tiles. Raster label tiles of each
 // zoom level contain different text, so while flying a road name would suddenly swap when its area
-// switches level. Forcing the label sources to the ideal level keeps every name stable.
+// switches level. During playback the label sources therefore only use tiles of the highest level,
+// and only up to LABEL_RANGE x the camera->centre distance (further away text is tiny and in the
+// horizon haze; covering everything up to the horizon at high pitch would need thousands of tiles).
 const LABEL_SOURCES = ['roads', 'places'];
-function lockLabelZoom() {
-  const z = Math.round(map.getZoom() + 1); // same as MapLibre's coveringZoomLevel for 256px raster tiles
-  for (const id of LABEL_SOURCES) { const src = map.getSource(id); if (src) src.minzoom = Math.min(z, src.maxzoom); }
+const LABEL_MARK = 0.25;   // minzoom marker that identifies the label sources inside coveringTiles()
+const LABEL_RANGE = 4;
+let labelLock = false;
+
+function markLabelSources() {
+  for (const id of LABEL_SOURCES) { const src = map.getSource(id); if (src) src.minzoom = LABEL_MARK; }
 }
-function unlockLabelZoom() {
-  for (const id of LABEL_SOURCES) { const src = map.getSource(id); if (src) src.minzoom = 0; }
-  map.triggerRepaint();
-}
+
+(function patchCoveringTiles() {
+  const tr = map.transform, orig = tr.coveringTiles;
+  tr.coveringTiles = function (opts) {
+    if (opts.minzoom !== LABEL_MARK) return orig.call(this, opts);
+    const lod = orig.call(this, { ...opts, minzoom: 0 });
+    if (!labelLock || !lod.length) return lod;
+    // label level from the camera zoom (same rule as MapLibre's coveringZoomLevel), so it never
+    // changes while the zoom is constant
+    const zMax = Math.min(opts.maxzoom, Math.max(0, Math.round(this.zoom + Math.log2(this.tileSize / opts.tileSize))));
+    const n = 2 ** zMax;
+    const cam = this.pointCoordinate(this.getCameraPoint());
+    const ctr = maplibregl.MercatorCoordinate.fromLngLat(this.center);
+    const cx = cam.x * n, cy = cam.y * n;
+    const range = LABEL_RANGE * Math.hypot(ctr.x * n - cx, ctr.y * n - cy) + 2;
+    const out = [];
+    const expand = t => {
+      const sz = 2 ** (zMax - t.canonical.z);
+      const x0 = t.canonical.x * sz + t.wrap * n, y0 = t.canonical.y * sz;
+      const dx = Math.max(x0 - cx, 0, cx - (x0 + sz)), dy = Math.max(y0 - cy, 0, cy - (y0 + sz));
+      if (Math.hypot(dx, dy) > range) return;           // too far: no labels there
+      if (t.canonical.z >= zMax) out.push(t);
+      else for (const c of t.children(opts.maxzoom)) expand(c);
+    };
+    for (const t of lod) expand(t);
+    return out;
+  };
+})();
 
 // ---------- apply one frame ----------
 let lastIdx = -1;
@@ -447,8 +505,12 @@ function applyFrame(f) {
     lastIdx = p.idx;
   }
   map.getSource('head').setData({ type:'Point', coordinates:[p.lon, p.lat] });
+  // MapLibre 4 freezes the camera altitude during easeTo/flyTo with terrain and only unfreezes it
+  // with `freezeElevation`; a frozen altitude makes the rider drift up/down the screen over hills.
+  // Every render must use the ground height under the camera centre.
+  map.stop();
+  map._elevationFreeze = false;
   map.jumpTo(f.cam);
-  lockLabelZoom();
 }
 
 // speed (km/h) averaged over ±150 m of track, null if the GPX has no timestamps
@@ -460,39 +522,136 @@ function speedAt(d) {
   if (ta == null || tb == null || tb <= ta) return null;
   return (b - a) / ((tb - ta) / 3600000);
 }
-const statText = s => ({ dist: s.d.toFixed(2) + ' km',
-  sub: 'Elev ' + Math.round(s.ele) + ' m' + (s.speed != null ? '  ·  ' + s.speed.toFixed(1) + ' km/h' : '') });
-
-function showStatsDom(s) {
-  $('stats').style.display = s ? 'block' : 'none';
-  if (!s) return;
-  const t = statText(s);
-  $('sDist').textContent = t.dist;
-  $('sSub').textContent = t.sub;
+// heart rate averaged over ±150 m, null if the GPX has none
+function hrAt(d) {
+  if (!track.hasHr) return null;
+  const w = Math.min(0.15, track.total / 2);
+  let sum = 0, n = 0;
+  for (let i = 0; i <= 6; i++) { const v = pointAt(clamp(d - w + (2 * w * i) / 6, 0, track.total)).hr; if (v != null) { sum += v; n++; } }
+  return n ? sum / n : null;
 }
+const statAt = d => ({ d, ele: pointAt(d).ele, speed: speedAt(d), hr: hrAt(d) });
+
+// ---------- HUD: brand + stat row with icons (drawn the same in preview and video) ----------
+let logoImg = null, lastStats = null;
+const FONT_NUM = '"Barlow Condensed", "Arial Narrow", system-ui, sans-serif';
+const FONT_BRAND = 'Montserrat, system-ui, sans-serif';
+
+function drawIcon(ctx, type, cx, cy, s) {
+  ctx.save();
+  ctx.fillStyle = ctx.strokeStyle = '#fff';
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (type === 'dist') {            // road in perspective with a dashed centre line
+    ctx.lineWidth = s * 0.13;
+    ctx.beginPath();
+    ctx.moveTo(cx - s * 0.16, cy - s * 0.45); ctx.lineTo(cx - s * 0.42, cy + s * 0.45);
+    ctx.moveTo(cx + s * 0.16, cy - s * 0.45); ctx.lineTo(cx + s * 0.42, cy + s * 0.45);
+    ctx.stroke();
+    ctx.lineWidth = s * 0.1;
+    for (const [a, b] of [[-0.42, -0.24], [-0.08, 0.1], [0.26, 0.45]]) {
+      ctx.beginPath(); ctx.moveTo(cx, cy + a * s); ctx.lineTo(cx, cy + b * s); ctx.stroke();
+    }
+  } else if (type === 'speed') {    // gauge with needle
+    ctx.lineWidth = s * 0.12;
+    ctx.beginPath(); ctx.arc(cx, cy + s * 0.08, s * 0.42, Math.PI * 0.8, Math.PI * 2.2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, cy + s * 0.08); ctx.lineTo(cx + s * 0.24, cy - s * 0.16); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy + s * 0.08, s * 0.09, 0, Math.PI * 2); ctx.fill();
+  } else if (type === 'elev') {     // two peaks
+    ctx.beginPath();
+    ctx.moveTo(cx - s * 0.5, cy + s * 0.4); ctx.lineTo(cx - s * 0.1, cy - s * 0.42); ctx.lineTo(cx + s * 0.12, cy + s * 0.02);
+    ctx.lineTo(cx + s * 0.27, cy - s * 0.16); ctx.lineTo(cx + s * 0.5, cy + s * 0.4); ctx.closePath(); ctx.fill();
+  } else if (type === 'hr') {       // heart
+    ctx.beginPath();
+    for (let i = 0; i <= 64; i++) {
+      const t = (i / 64) * Math.PI * 2;
+      const x = 16 * Math.sin(t) ** 3, y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+      const px = cx + x * s / 34, py = cy - y * s / 34 - s * 0.04;
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawHud(ctx, W, H, s, attrib) {
+  const k = Math.min(W, H) / 1080, vertical = H > W;
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 12 * k; ctx.shadowOffsetY = 2 * k;
+
+  // brand (optional logo on the left of the text)
+  const brand = ($('brand').value || '').trim();
+  const brandY = vertical ? H * 0.115 : H * 0.095, bSize = 54 * k;
+  ctx.font = `800 ${bSize}px ${FONT_BRAND}`;
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${4 * k}px`;
+  const tw = brand ? ctx.measureText(brand).width : 0;
+  const lh = bSize * 1.35, lw = logoImg ? lh * logoImg.naturalWidth / logoImg.naturalHeight : 0, gap = logoImg && brand ? 18 * k : 0;
+  const bx = W / 2 - (lw + gap + tw) / 2;
+  if (logoImg) ctx.drawImage(logoImg, bx, brandY - bSize * 0.37 - lh / 2, lw, lh);
+  if (brand) { ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.fillText(brand, bx + lw + gap, brandY); ctx.textAlign = 'center'; }
+  if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+
+  // stat row: distance, speed, elevation, heart rate (only those the GPX has)
+  if (s) {
+    const items = [{ icon: 'dist', v: s.d.toFixed(2), u: 'km' }];
+    if (s.speed != null) items.push({ icon: 'speed', v: s.speed.toFixed(1), u: 'km/h' });
+    items.push({ icon: 'elev', v: String(Math.round(s.ele)), u: 'm' });
+    if (s.hr != null) items.push({ icon: 'hr', v: String(Math.round(s.hr)), u: 'bpm' });
+    const rowW = vertical ? W : Math.min(W * 0.75, items.length * 330 * k), x0 = (W - rowW) / 2;
+    const iconY = vertical ? H * 0.185 : H * 0.2;
+    items.forEach((it, i) => {
+      const cx = x0 + rowW * (i + 0.5) / items.length;
+      drawIcon(ctx, it.icon, cx, iconY, 50 * k);
+      ctx.fillStyle = '#fff';
+      ctx.font = `600 ${86 * k}px ${FONT_NUM}`; ctx.fillText(it.v, cx, iconY + 112 * k);
+      ctx.font = `500 ${44 * k}px ${FONT_NUM}`; ctx.fillText(it.u, cx, iconY + 162 * k);
+    });
+  }
+
+  // map attribution (required by the tile providers)
+  ctx.shadowBlur = 4 * k; ctx.textAlign = 'left';
+  ctx.font = `${18 * k}px system-ui, sans-serif`; ctx.fillStyle = 'rgba(255,255,255,.75)';
+  ctx.fillText(attrib, 16 * k, H - 16 * k);
+  ctx.restore();
+}
+
+// draw the HUD on the on-screen canvas over the map
+function renderHud(s = lastStats) {
+  lastStats = s;
+  const c = $('hud'), dpr = window.devicePixelRatio || 1;
+  const w = Math.round($('wrap').clientWidth * dpr), h = Math.round($('wrap').clientHeight * dpr);
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  drawHud(ctx, w, h, s, ATTRIB[$('style').value]);
+}
+const loadFonts = () => Promise.all([
+  document.fonts.load(`600 80px ${FONT_NUM}`), document.fonts.load(`800 50px ${FONT_BRAND}`)
+]).catch(() => {});
 
 // ---------- preview (realtime, not recorded) ----------
 let running = false;
 function setBusy(b) {
   running = b;
-  for (const id of ['preview', 'record', 'gpx', 'style', 'format', 'fps', 'duration', 'pitch', 'zoomlvl', 'readable']) $(id).disabled = b;
+  for (const id of ['preview', 'record', 'gpx', 'style', 'format', 'fps', 'duration', 'pitch', 'zoomlvl', 'readable', 'brand', 'logo']) $(id).disabled = b;
 }
 
 $('preview').addEventListener('click', async () => {
   if (running || !track) return;
   setBusy(true);
-  await ensureLayers();
+  await Promise.all([ensureLayers(), loadFonts()]);
+  labelLock = true;
   const fps = 30, frames = buildPlan(fps);
   status(`Preview ±${Math.round(frames.info.seconds)} dtk… (hasil Generate lebih mulus & tajam) ${frames.info.note}`);
   await new Promise(resolve => {
     const begin = performance.now();
     (function tick(now) {
       const i = Math.min(frames.length - 1, Math.floor((now - begin) / 1000 * fps));
-      applyFrame(frames[i]); showStatsDom(frames[i].stats);
+      applyFrame(frames[i]); renderHud(frames[i].stats);
       if (i < frames.length - 1 && running) requestAnimationFrame(tick); else resolve();
     })(begin);
   });
-  unlockLabelZoom();
+  labelLock = false; map.triggerRepaint();
   status('Preview selesai.');
   setBusy(false);
 });
@@ -539,26 +698,6 @@ async function pickCodec(W, H, fps) {
   return null;
 }
 
-function drawOverlay(ctx, W, H, s, attrib) {
-  const k = Math.min(W, H) / 720, vertical = H > W;
-  if (s) {
-    const t = statText(s);
-    const fBig = `bold ${30*k}px system-ui, sans-serif`, fSmall = `${20*k}px system-ui, sans-serif`;
-    ctx.font = fBig; const w1 = ctx.measureText(t.dist).width;
-    ctx.font = fSmall; const w2 = ctx.measureText(t.sub).width;
-    const bw = Math.max(w1, w2) + 32*k, bh = 80*k;
-    // story: centred, above Instagram's bottom UI ; landscape: bottom-left
-    const x = vertical ? (W - bw) / 2 : 20*k, y = vertical ? H * 0.78 - bh : H - 20*k - bh;
-    ctx.fillStyle = 'rgba(0,0,0,.6)';
-    ctx.beginPath(); ctx.roundRect(x, y, bw, bh, 12*k); ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.font = fBig; ctx.fillText(t.dist, x + 16*k, y + 40*k);
-    ctx.font = fSmall; ctx.fillText(t.sub, x + 16*k, y + 68*k);
-  }
-  ctx.font = `${12*k}px system-ui, sans-serif`; ctx.textAlign = 'right';
-  ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.fillText(attrib, W - 10*k, H - 10*k);
-  ctx.textAlign = 'left';
-}
 
 $('record').addEventListener('click', async () => {
   if (running || !track) return;
@@ -595,17 +734,19 @@ $('record').addEventListener('click', async () => {
   encoder.configure(enc.cfg);
 
   try {
-    await ensureLayers();
+    await Promise.all([ensureLayers(), loadFonts()]);
+    labelLock = true;
     const frames = buildPlan(fps);
     const started = performance.now();
     let incomplete = 0;
     for (let i = 0; i < frames.length; i++) {
       if (encErr) throw encErr;
       const f = frames[i];
-      applyFrame(f); showStatsDom(f.stats);
+      applyFrame(f); renderHud(f.stats);
       if (!(await renderReady())) incomplete++;
+      ctx.fillStyle = HAZE; ctx.fillRect(0, 0, W, H);   // MapLibre leaves the far gap transparent
       ctx.drawImage(map.getCanvas(), 0, 0, W, H);
-      drawOverlay(ctx, W, H, f.stats, attrib);
+      drawHud(ctx, W, H, f.stats, attrib);
       const vf = new VideoFrame(out, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
       encoder.encode(vf, { keyFrame: i % (fps * 2) === 0 });
       vf.close();
@@ -632,13 +773,15 @@ $('record').addEventListener('click', async () => {
   } finally {
     try { encoder.state !== 'closed' && encoder.close(); } catch {}
     restoreRendering();
-    unlockLabelZoom();
+    labelLock = false;
     recordPR = null;
     applyLayout();
     $('bar').style.display = 'none';
     setBusy(false);
   }
 });
+renderHud(null);
+loadFonts().then(() => renderHud());
 </script>
 </body>
 </html>
