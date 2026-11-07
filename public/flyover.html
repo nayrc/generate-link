@@ -11,135 +11,290 @@
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/mp4-muxer@5.1.3/build/mp4-muxer.js"></script>
 <style>
-  :root { --bg:#0f1115; --panel:#181b22; --text:#e8eaf0; --muted:#9aa1b2; --accent:#fc4c02; }
-  * { box-sizing: border-box; }
-  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--text); }
-  header { padding:14px 16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-  header h1 { font-size:18px; margin:0; }
-  header a { color:var(--muted); font-size:14px; }
-  .controls { display:flex; flex-wrap:wrap; gap:10px; padding:0 16px 12px; align-items:center; }
-  .controls label { font-size:13px; color:var(--muted); display:flex; gap:6px; align-items:center; }
-  select, input[type=number] { background:var(--panel); color:var(--text); border:1px solid #2a2f3a; border-radius:6px; padding:6px; }
-  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:8px 14px; font-weight:600; cursor:pointer; }
-  button:disabled { opacity:.45; cursor:not-allowed; }
-  button.secondary { background:#2a2f3a; }
-  .file { background:var(--panel); border:1px dashed #3a4050; padding:8px 12px; border-radius:6px; cursor:pointer; font-size:14px; }
-  .file input { display:none; }
-  #wrap { position:relative; width:100%; max-width:1280px; margin:0 auto; aspect-ratio:16/9; background:#7ea9de; overflow:hidden; }
-  #wrap.vertical { aspect-ratio:9/16; max-width:420px; }
+  /* ---------- mobile-first base ---------- */
+  :root {
+    --bg:#0e1013; --panel:#171a20; --panel2:#1f232b; --line:#2a2f39; --text:#eef0f4; --muted:#9aa1b2;
+    --accent:#cdf227; --accent-ink:#1b1f0a; --danger:#ff5a5f; --radius:16px;
+    --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { min-height:100vh; }
+  [hidden] { display:none !important; }
+  button, .btn { font:inherit; font-weight:650; border:0; border-radius:12px; min-height:44px; padding:0 16px; cursor:pointer;
+    display:inline-flex; align-items:center; justify-content:center; gap:6px; background:var(--accent); color:var(--accent-ink); }
+  button.secondary, .btn.secondary { background:var(--panel2); color:var(--text); border:1px solid var(--line); }
+  button.ghost, .btn.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
+  button.danger { background:transparent; color:var(--danger); border:1px solid rgba(255,90,95,.5); }
+  .small { min-height:36px; padding:0 12px; font-size:13px; border-radius:10px; }
+  button:disabled, .btn.disabled { opacity:.45; cursor:not-allowed; }
+  .btn input[type=file] { display:none; }
+  input[type=text] { width:100%; min-height:44px; background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:12px; padding:0 14px; font:inherit; }
+  input[type=text]:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  .muted { color:var(--muted); font-size:13px; }
+
+  /* app bar */
+  .appbar { position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:10px; padding:10px 16px;
+    background:rgba(14,16,19,.85); backdrop-filter:blur(10px); border-bottom:1px solid var(--line); }
+  .appbar a { color:var(--muted); text-decoration:none; font-size:20px; line-height:1; padding:6px 6px 6px 0; }
+  .appbar h1 { margin:0; font-size:17px; font-weight:750; letter-spacing:.2px; }
+  .appbar h1 span { color:var(--accent); }
+
+  main { max-width:1180px; margin:0 auto; padding:16px; }
+
+  /* upload */
+  .drop { border:2px dashed var(--line); border-radius:var(--radius); background:var(--panel); padding:32px 20px; text-align:center; }
+  .drop.over { border-color:var(--accent); background:#1a1f14; }
+  .drop .icon { font-size:40px; }
+  .drop h2 { margin:8px 0 4px; font-size:20px; }
+  .drop p { margin:0 auto 18px; max-width:420px; color:var(--muted); font-size:14px; }
+  .fileinfo { display:flex; align-items:center; gap:12px; padding:12px 14px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); }
+  .fileinfo .ico { font-size:22px; }
+  .fileinfo .meta { flex:1; min-width:0; }
+  .fileinfo b { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #uploadMsg { color:var(--danger); font-size:13px; margin-top:8px; }
+
+  /* tabs */
+  .tabs { display:flex; gap:6px; margin:14px 0; padding:4px; background:var(--panel); border:1px solid var(--line); border-radius:14px; }
+  .tabs button { flex:1; background:transparent; color:var(--muted); min-height:40px; }
+  .tabs button.on { background:var(--panel2); color:var(--text); box-shadow:0 1px 0 rgba(255,255,255,.04) inset; }
+
+  /* video tab */
+  .video-layout { display:grid; gap:16px; }
+  #wrap { position:relative; width:100%; aspect-ratio:16/9; margin:0 auto; background:#7ea9de; overflow:hidden; border-radius:var(--radius); }
+  #wrap.vertical { width:auto; height:min(58vh, calc((100vw - 32px) * 16 / 9)); aspect-ratio:9/16; }
   /* map is laid out at a fixed "phone-like" size and scaled to fit, so preview == video */
   #map { position:absolute; left:0; top:0; transform-origin:0 0; }
   /* HUD (brand + stats) is drawn on a canvas with the same code as the video frames */
   #hud { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
-  input[type=text] { background:var(--panel); color:var(--text); border:1px solid #2a2f3a; border-radius:6px; padding:6px; }
-  #status { padding:8px 16px; color:var(--muted); font-size:13px; min-height:20px; }
-  #bar { height:4px; background:#2a2f3a; margin:0 16px 8px; border-radius:2px; overflow:hidden; display:none; }
-  #bar div { height:100%; width:0; background:var(--accent); }
-  #download { display:none; padding:12px 16px 24px; max-width:1280px; margin:0 auto; }
-  #download video { max-width:100%; max-height:70vh; display:block; margin-bottom:8px; }
-  #download a { color:var(--accent); font-weight:600; }
-  #download .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-  /* ---- stickers / share ---- */
-  #share { max-width:1280px; margin:0 auto; padding:8px 16px 0; }
-  #share h2 { font-size:17px; margin:8px 0 4px; }
-  #share .muted { color:var(--muted); font-size:13px; margin:0 0 10px; }
-  #share .chips { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; font-size:13px; color:var(--muted); }
-  .chip { background:var(--panel); color:var(--text); border:1px solid #2a2f3a; border-radius:999px; padding:6px 12px; font-weight:600; }
-  .chip.on { border-color:#fff; }
-  .chip i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:-1px; }
-  #cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
-  .card { position:relative; border-radius:14px; overflow:hidden; cursor:pointer; outline:3px solid transparent; outline-offset:3px;
-    aspect-ratio:9/16; background:repeating-conic-gradient(#3b3f47 0% 25%, #2a2d33 0% 50%) 50% / 22px 22px; }
-  .card.sel { outline-color:#fff; }
+
+  .group { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:14px; }
+  .group + .group { margin-top:12px; }
+  .group h3 { margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); font-weight:700; }
+  .field + .field { margin-top:14px; }
+  .field > .lbl { display:flex; justify-content:space-between; font-size:14px; margin-bottom:8px; }
+  .field > .lbl b { color:var(--accent); font-weight:700; }
+  details.group summary { cursor:pointer; font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); font-weight:700; list-style:none; }
+  details.group summary::after { content:'▾'; float:right; }
+  details.group[open] summary { margin-bottom:10px; }
+
+  /* segmented control (built from a <select>) */
+  .seg { display:grid; grid-template-columns:repeat(var(--cols, 2), minmax(0, 1fr)); gap:6px; }
+  .seg button { min-width:0; min-height:40px; padding:0 12px; border-radius:10px; background:var(--panel2); color:var(--text); border:1px solid var(--line); font-weight:600; font-size:14px; }
+  .seg button.on { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+  .seg + .seg { margin-top:8px; }
+
+  input[type=range] { width:100%; accent-color:var(--accent); height:28px; }
+
+  /* switch */
+  .switch { display:flex; align-items:flex-start; gap:12px; cursor:pointer; }
+  .switch input { position:absolute; opacity:0; width:0; height:0; }
+  .switch .knob { flex:none; width:46px; height:28px; border-radius:999px; background:var(--panel2); border:1px solid var(--line); position:relative; transition:.2s; }
+  .switch .knob::after { content:''; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:#fff; transition:.2s; }
+  .switch input:checked + .knob { background:var(--accent); border-color:var(--accent); }
+  .switch input:checked + .knob::after { left:21px; background:var(--accent-ink); }
+  .switch small { display:block; color:var(--muted); font-size:12px; }
+
+  .logo-row { display:flex; align-items:center; gap:10px; margin-top:10px; }
+  #logoThumb { height:36px; max-width:90px; object-fit:contain; background:var(--panel2); border-radius:8px; padding:4px; }
+
+  /* sticky action bar */
+  .actionbar { position:sticky; bottom:0; z-index:15; margin:16px -16px 0; padding:10px 16px calc(12px + var(--safe-b));
+    background:rgba(14,16,19,.92); backdrop-filter:blur(10px); border-top:1px solid var(--line); }
+  .actionbar .actions { display:flex; gap:10px; }
+  .actionbar .actions button { flex:1; }
+  .status { color:var(--muted); font-size:13px; min-height:18px; margin-bottom:8px; }
+  #bar { height:4px; background:var(--panel2); border-radius:2px; overflow:hidden; margin-bottom:10px; }
+  #bar div { height:100%; width:0; background:var(--accent); transition:width .2s; }
+
+  /* result */
+  #download { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:12px; }
+  #download h3 { margin:0 0 10px; font-size:15px; }
+  #download video { width:100%; max-height:60vh; border-radius:12px; background:#000; display:block; }
+  #download .row { display:flex; gap:10px; margin-top:10px; }
+  #download .row > * { flex:1; text-decoration:none; }
+
+  /* ---- stickers ---- */
+  #share h2 { font-size:18px; margin:0 0 4px; }
+  #share .muted { margin:0 0 12px; }
+  #share .chips { display:flex; gap:8px; align-items:center; margin-bottom:10px; font-size:13px; color:var(--muted);
+    overflow-x:auto; scrollbar-width:none; white-space:nowrap; padding-bottom:2px; }
+  #share .chips::-webkit-scrollbar { display:none; }
+  .chip { flex:none; min-height:36px; background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:999px; padding:0 12px; font-weight:600; font-size:13px; }
+  .chip.on { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+  .chip i { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:4px; }
+  #cards { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; margin-top:6px; }
+  .card { position:relative; border-radius:14px; overflow:hidden; cursor:pointer; outline:3px solid transparent; outline-offset:2px;
+    aspect-ratio:9/16; background:repeating-conic-gradient(#343842 0% 25%, #262a31 0% 50%) 50% / 20px 20px; }
+  .card.sel { outline-color:var(--accent); }
   .card canvas { width:100%; height:100%; display:block; }
-  .card span { position:absolute; left:8px; bottom:8px; font-size:11px; background:rgba(0,0,0,.6); padding:2px 8px; border-radius:999px; }
+  .card span { position:absolute; left:8px; bottom:8px; font-size:11px; background:rgba(0,0,0,.65); padding:3px 8px; border-radius:999px; }
   .card .wait { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--muted); }
-  #shareBar { position:sticky; bottom:0; display:flex; gap:10px; justify-content:center; padding:12px 0 16px; background:linear-gradient(transparent, var(--bg) 35%); }
-  #shareBar button { min-width:96px; }
-  #shareMsg { text-align:center; color:var(--muted); font-size:13px; min-height:18px; padding-bottom:16px; }
+  #shareBar .actions button { flex:1; }
+  #shareMsg { text-align:center; }
+
+  /* ---------- tablet / desktop ---------- */
+  @media (min-width:700px) {
+    #cards { grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); }
+  }
+  @media (min-width:960px) {
+    main { padding:24px; }
+    .video-layout { grid-template-columns:minmax(0, 1fr) 380px; align-items:start; }
+    .preview-col { position:sticky; top:72px; }
+    #wrap.vertical { height:min(76vh, 760px); }
+    /* align the action bar with the settings column so it never covers the preview */
+    .actionbar { width:380px; margin:16px 0 0 auto; border:1px solid var(--line); border-radius:var(--radius); bottom:16px; }
+    #shareBar { width:auto; margin:16px 0 0; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>🛰️ GPX Flyover</h1>
-  <a href="/">← Shortlink</a>
+<header class="appbar">
+  <a href="/" aria-label="Kembali">←</a>
+  <h1>GPX <span>Flyover</span></h1>
 </header>
-<div class="controls">
-  <label class="file">📂 Upload GPX<input type="file" id="gpx" accept=".gpx,application/gpx+xml"></label>
-  <label>Format
-    <select id="format">
-      <option value="v1080">Vertical 9:16 · Story 1080×1920</option>
-      <option value="v720">Vertical 9:16 · Story 720×1280</option>
-      <option value="l1080">Landscape 16:9 · 1080p</option>
-      <option value="l720">Landscape 16:9 · 720p</option>
-    </select>
-  </label>
-  <label>Durasi video
-    <select id="duration">
-      <option value="auto">Otomatis (maks 60 dtk)</option>
-      <option value="15">15 dtk</option>
-      <option value="30">30 dtk</option>
-      <option value="60">60 dtk</option>
-      <option value="90">90 dtk</option>
-      <option value="120">120 dtk</option>
-    </select>
-  </label>
-  <label>Gaya peta
-    <select id="style">
-      <option value="satellite">Satelit</option>
-      <option value="streets">Jalan (OSM)</option>
-    </select>
-  </label>
-  <label>Zoom kamera
-    <select id="zoomlvl">
-      <option value="1">Sangat dekat</option>
-      <option value="0" selected>Dekat</option>
-      <option value="-1.5">Sedang</option>
-      <option value="-3">Jauh</option>
-    </select>
-  </label>
-  <label title="Kalau rute terlalu panjang untuk durasinya, kamera mundur sedikit supaya gerakan tidak terlalu cepat">
-    <input type="checkbox" id="readable" checked> Jaga nama jalan terbaca</label>
-  <label>Pitch <input type="number" id="pitch" value="75" min="0" max="80" style="width:56px"></label>
-  <label>Brand <input type="text" id="brand" value="Gowesementara" maxlength="40" style="width:150px"></label>
-  <label class="file">🖼 Logo (opsional)<input type="file" id="logo" accept="image/*"></label>
-  <label>FPS
-    <select id="fps">
-      <option value="30">30</option>
-      <option value="60">60</option>
-    </select>
-  </label>
-  <button id="preview" class="secondary" disabled>▶ Preview</button>
-  <button id="record" disabled>⏺ Generate Video</button>
-</div>
-<div id="status">Upload file .gpx untuk memulai.</div>
-<div id="bar"><div></div></div>
-<div id="wrap">
-  <div id="map"></div>
-  <canvas id="hud"></canvas>
-</div>
-<div id="download"></div>
-<section id="share" hidden>
-  <h2>Activity stickers</h2>
-  <p class="muted" id="actInfo"></p>
-  <div class="chips">Route color:
-    <button class="chip on" data-color="#cdf227"><i style="background:#cdf227"></i>Lime</button>
-    <button class="chip" data-color="#ff6a1a"><i style="background:#ff6a1a"></i>Orange</button>
-    <button class="chip" data-color="#ffffff"><i style="background:#fff"></i>White</button>
-  </div>
-  <div class="chips">Card color:
-    <button class="chip on" data-theme="pastel"><i style="background:#dfe39a"></i>Pastel</button>
-    <button class="chip" data-theme="dark"><i style="background:#26331f;border:1px solid #556"></i>Dark</button>
-    <button class="chip" data-theme="sand"><i style="background:#e8dfd2"></i>Sand</button>
-  </div>
-  <div id="cards"></div>
-  <div id="shareBar">
-    <button id="copyBtn" class="secondary">📋 Copy</button>
-    <button id="saveBtn" class="secondary">⬇ Save</button>
-    <button id="shareBtn">📤 Share</button>
-  </div>
-  <div id="shareMsg"></div>
-</section>
+
+<main>
+  <!-- step 1: upload -->
+  <section id="uploadCard">
+    <div class="drop" id="drop">
+      <div class="icon">🗺️</div>
+      <h2>Upload file GPX</h2>
+      <p>Buat video flyover 3D dan stiker aktivitas dari file GPX (Strava, Garmin, COROS, komoot, dll). Tarik file ke sini atau pilih dari perangkat.</p>
+      <label class="btn">📂 Pilih file GPX<input type="file" id="gpx" accept=".gpx,application/gpx+xml"></label>
+    </div>
+    <div class="fileinfo" id="fileInfo" hidden>
+      <div class="ico">🚴</div>
+      <div class="meta"><b id="fiName"></b><div class="muted" id="fiStats"></div></div>
+      <label class="btn ghost small" for="gpx">Ganti</label>
+    </div>
+    <div id="uploadMsg"></div>
+  </section>
+
+  <nav class="tabs" id="tabs" hidden>
+    <button data-tab="video" class="on">🎬 Video</button>
+    <button data-tab="stickers">🖼️ Stiker</button>
+  </nav>
+
+  <!-- video -->
+  <section id="tab-video" hidden>
+    <div class="video-layout">
+      <div class="preview-col">
+        <div id="wrap">
+          <div id="map"></div>
+          <canvas id="hud"></canvas>
+        </div>
+      </div>
+      <div class="settings-col">
+        <div id="download" hidden></div>
+        <div class="group">
+          <h3>Format</h3>
+          <div class="seg" id="segOrient"><button data-v="v">📱 Story 9:16</button><button data-v="l">🖥️ Landscape 16:9</button></div>
+          <div class="seg" id="segQuality"><button data-v="1080">Full HD</button><button data-v="720">HD (lebih cepat)</button></div>
+          <select id="format" hidden>
+            <option value="v1080">Vertical 1080×1920</option>
+            <option value="v720">Vertical 720×1280</option>
+            <option value="l1080">Landscape 1920×1080</option>
+            <option value="l720">Landscape 1280×720</option>
+          </select>
+        </div>
+        <div class="group">
+          <h3>Durasi video</h3>
+          <select id="duration" class="segify" data-cols="3">
+            <option value="auto">Otomatis</option>
+            <option value="15">15s</option>
+            <option value="30">30s</option>
+            <option value="60">60s</option>
+            <option value="90">90s</option>
+            <option value="120">120s</option>
+          </select>
+        </div>
+        <div class="group">
+          <h3>Kamera</h3>
+          <div class="field">
+            <div class="lbl">Zoom</div>
+            <select id="zoomlvl" class="segify" data-cols="2">
+              <option value="1">Sangat dekat</option>
+              <option value="0" selected>Dekat</option>
+              <option value="-1.5">Sedang</option>
+              <option value="-3">Jauh</option>
+            </select>
+          </div>
+          <div class="field">
+            <div class="lbl">Kemiringan kamera <b id="pitchVal">75°</b></div>
+            <input type="range" id="pitch" min="0" max="80" step="1" value="75">
+          </div>
+          <div class="field">
+            <label class="switch"><input type="checkbox" id="readable" checked><span class="knob"></span>
+              <span>Jaga nama jalan terbaca<small>Kalau rute terlalu panjang untuk durasinya, kamera sedikit mundur supaya gerakan tidak terlalu cepat.</small></span></label>
+          </div>
+        </div>
+        <div class="group">
+          <h3>Peta</h3>
+          <select id="style" class="segify">
+            <option value="satellite">🛰️ Satelit</option>
+            <option value="streets">🗺️ Jalan (OSM)</option>
+          </select>
+        </div>
+        <div class="group">
+          <h3>Brand</h3>
+          <input type="text" id="brand" value="Gowesementara" maxlength="40" placeholder="Nama brand / komunitas">
+          <div class="logo-row">
+            <img id="logoThumb" alt="" hidden>
+            <label class="btn ghost small" id="logoBtn">🖼️ Upload logo<input type="file" id="logo" accept="image/*"></label>
+            <button class="ghost small" id="logoClear" hidden>Hapus</button>
+          </div>
+        </div>
+        <details class="group">
+          <summary>Lanjutan</summary>
+          <div class="field">
+            <div class="lbl">Frame rate</div>
+            <select id="fps" class="segify" data-cols="1">
+              <option value="30">30 fps</option>
+              <option value="60">60 fps (lebih halus, 2× lebih lama)</option>
+            </select>
+          </div>
+        </details>
+      </div>
+    </div>
+    <div class="actionbar">
+      <div class="status" id="status">Upload file .gpx untuk memulai.</div>
+      <div id="bar" hidden><div></div></div>
+      <div class="actions">
+        <button id="preview" class="secondary" disabled>▶ Preview</button>
+        <button id="record" disabled>⏺ Buat Video</button>
+        <button id="cancel" class="danger" hidden>✕ Batalkan</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- stickers -->
+  <section id="tab-stickers" hidden>
+    <section id="share" hidden>
+      <h2>Activity stickers</h2>
+      <p class="muted" id="actInfo"></p>
+      <div class="chips">Route color:
+        <button class="chip on" data-color="#cdf227"><i style="background:#cdf227"></i>Lime</button>
+        <button class="chip" data-color="#ff6a1a"><i style="background:#ff6a1a"></i>Orange</button>
+        <button class="chip" data-color="#ffffff"><i style="background:#fff"></i>White</button>
+      </div>
+      <div class="chips">Card color:
+        <button class="chip on" data-theme="pastel"><i style="background:#dfe39a"></i>Pastel</button>
+        <button class="chip" data-theme="dark"><i style="background:#26331f;border:1px solid #556"></i>Dark</button>
+        <button class="chip" data-theme="sand"><i style="background:#e8dfd2"></i>Sand</button>
+      </div>
+      <div id="cards"></div>
+      <div class="actionbar" id="shareBar">
+        <div class="status" id="shareMsg"></div>
+        <div class="actions">
+          <button id="copyBtn" class="secondary">📋 Copy</button>
+          <button id="saveBtn" class="secondary">⬇ Save</button>
+          <button id="shareBtn">📤 Share</button>
+        </div>
+      </div>
+    </section>
+  </section>
+</main>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -370,30 +525,98 @@ function trackBounds() {
   return b;
 }
 
-$('gpx').addEventListener('change', async e => {
-  const f = e.target.files[0]; if (!f) return;
+async function loadGpx(f) {
+  if (!f || running) return;
+  $('uploadMsg').textContent = '';
   try {
     track = parseGPX(await f.text());
-    await ensureLayers();
-    map.fitBounds(trackBounds(), { padding: 60, pitch: 0, bearing: 0, duration: 1500, freezeElevation: true });
-    $('preview').disabled = $('record').disabled = false;
-    status(`${f.name}: ${track.coords.length} titik, ${track.total.toFixed(2)} km` + (track.hasHr ? ' · ada data detak jantung' : ''));
-    renderHud(statAt(0));
-    refreshStickers(true);
-  } catch (err) { status('Gagal membaca GPX: ' + err.message); }
+  } catch (err) {
+    $('uploadMsg').textContent = 'Gagal membaca GPX: ' + err.message;
+    return;
+  }
+  // step 2: file summary + tabs
+  const a = activitySummary(track);
+  $('drop').hidden = true; $('fileInfo').hidden = false; $('tabs').hidden = false;
+  $('fiName').textContent = f.name;
+  $('fiStats').textContent = [`${track.total.toFixed(1)} km`, a.hasEle ? `↗ ${Math.round(a.gain)} m` : '', a.moving ? fmtDur(a.moving) : '',
+    track.hasHr ? '❤ ada detak jantung' : ''].filter(Boolean).join(' · ');
+  $('download').hidden = true;
+  showTab('video');
+  await ensureLayers();
+  map.fitBounds(trackBounds(), { padding: 40, pitch: 0, bearing: 0, duration: 1200, freezeElevation: true });
+  $('preview').disabled = $('record').disabled = false;
+  status('Siap. Tekan Preview untuk melihat, atau Buat Video.');
+  renderHud(statAt(0));
+  refreshStickers(true);
+}
+$('gpx').addEventListener('change', e => { loadGpx(e.target.files[0]); e.target.value = ''; });
+const drop = $('drop');
+['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => loadGpx(e.dataTransfer.files[0]));
+
+// ---------- tabs ----------
+function showTab(name) {
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+  $('tab-video').hidden = name !== 'video';
+  $('tab-stickers').hidden = name !== 'stickers';
+  if (name === 'video') { applyLayout(); renderHud(); }
+}
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+
+// ---------- segmented controls built from <select class="segify"> ----------
+function segify(sel) {
+  const seg = document.createElement('div');
+  seg.className = 'seg';
+  seg.style.setProperty('--cols', sel.dataset.cols || Math.min(3, sel.options.length));
+  const sync = () => seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === sel.value));
+  for (const o of sel.options) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.dataset.v = o.value; b.textContent = o.textContent;
+    b.onclick = () => { if (sel.value === o.value) return; sel.value = o.value; sel.dispatchEvent(new Event('change')); sync(); };
+    seg.append(b);
+  }
+  sel.hidden = true;
+  sel.after(seg);
+  sel.addEventListener('change', sync);
+  sync();
+}
+document.querySelectorAll('select.segify').forEach(segify);
+
+// format = orientation (story / landscape) + quality (1080 / 720)
+function syncFormat() {
+  const v = $('format').value;
+  document.querySelectorAll('#segOrient button').forEach(b => b.classList.toggle('on', b.dataset.v === v[0]));
+  document.querySelectorAll('#segQuality button').forEach(b => b.classList.toggle('on', b.dataset.v === v.slice(1)));
+}
+document.querySelectorAll('#segOrient button, #segQuality button').forEach(b => b.onclick = () => {
+  const cur = $('format').value;
+  const v = b.parentElement.id === 'segOrient' ? b.dataset.v + cur.slice(1) : cur[0] + b.dataset.v;
+  if (v !== cur) { $('format').value = v; $('format').dispatchEvent(new Event('change')); }
+  syncFormat();
 });
+syncFormat();
+$('pitch').addEventListener('input', () => { $('pitchVal').textContent = $('pitch').value + '°'; });
 
 $('style').addEventListener('change', e => { styleReady = false; map.setStyle(buildStyle(e.target.value), { diff: false }); renderHud(); });
 $('brand').addEventListener('input', () => { renderHud(); refreshStickers(); });
-$('logo').addEventListener('change', async e => {
-  const f = e.target.files[0];
-  if (!f) { logoImg = null; return renderHud(); }
-  const img = new Image();
-  img.src = URL.createObjectURL(f);
-  try { await img.decode(); logoImg = img; } catch { logoImg = null; status('Logo tidak bisa dibaca, gunakan PNG/JPG.'); }
+function setLogo(img) {
+  logoImg = img;
+  $('logoThumb').hidden = !img; if (img) $('logoThumb').src = img.src;
+  $('logoClear').hidden = !img;
+  $('logoBtn').firstChild.textContent = img ? '🖼️ Ganti logo' : '🖼️ Upload logo';
   renderHud();
   refreshStickers();
+}
+$('logo').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const img = new Image();
+  img.src = URL.createObjectURL(f);
+  try { await img.decode(); setLogo(img); } catch { status('Logo tidak bisa dibaca, gunakan PNG/JPG.'); }
+  e.target.value = '';
 });
+$('logoClear').onclick = () => setLogo(null);
 
 // make sure the route sources/layers exist (style may have been swapped or still loading)
 async function ensureLayers() {
@@ -709,10 +932,17 @@ const loadFonts = () => Promise.all([
 
 // ---------- preview (realtime, not recorded) ----------
 let running = false;
+let cancelRequested = false;
 function setBusy(b) {
   running = b;
-  for (const id of ['preview', 'record', 'gpx', 'style', 'format', 'fps', 'duration', 'pitch', 'zoomlvl', 'readable', 'brand', 'logo']) $(id).disabled = b;
+  if (b) cancelRequested = false;
+  for (const id of ['preview', 'record', 'gpx', 'style', 'format', 'fps', 'duration', 'pitch', 'zoomlvl', 'readable', 'brand', 'logo', 'logoClear']) $(id).disabled = b;
+  document.querySelectorAll('.seg button').forEach(x => x.disabled = b);
+  $('logoBtn').classList.toggle('disabled', b);
+  $('preview').hidden = $('record').hidden = b;
+  $('cancel').hidden = !b;
 }
+$('cancel').onclick = () => { cancelRequested = true; running = false; status('Membatalkan…'); };
 
 $('preview').addEventListener('click', async () => {
   if (running || !track) return;
@@ -730,7 +960,7 @@ $('preview').addEventListener('click', async () => {
     })(begin);
   });
   labelLock = false; map.triggerRepaint();
-  status('Preview selesai.');
+  status(cancelRequested ? 'Preview dihentikan.' : 'Preview selesai.');
   setBusy(false);
 });
 
@@ -787,8 +1017,8 @@ $('record').addEventListener('click', async () => {
   if (!enc) return status('Encoder video tidak tersedia di browser ini.');
 
   setBusy(true);
-  $('download').style.display = 'none';
-  $('bar').style.display = 'block';
+  $('download').hidden = true;
+  $('bar').hidden = false; $('bar').firstElementChild.style.width = '0';
   // same CSS layout as the preview, rendered at pixelRatio = output / layout
   recordPR = W / lw;
   applyLayout();
@@ -819,6 +1049,7 @@ $('record').addEventListener('click', async () => {
     let incomplete = 0;
     for (let i = 0; i < frames.length; i++) {
       if (encErr) throw encErr;
+      if (cancelRequested) throw new Error('cancelled');
       const f = frames[i];
       applyFrame(f); renderHud(f.stats);
       if (!(await renderReady())) incomplete++;
@@ -834,32 +1065,33 @@ $('record').addEventListener('click', async () => {
         const pct = (i + 1) / frames.length, el = (performance.now() - started) / 1000;
         const eta = pct > 0.02 ? Math.round(el / pct - el) : '…';
         $('bar').firstElementChild.style.width = (pct * 100).toFixed(1) + '%';
-        status(`Rendering frame ${i + 1}/${frames.length} (${Math.round(pct*100)}%) · sisa ±${eta} dtk · biarkan tab ini tetap terbuka`);
+        status(`Membuat video… ${Math.round(pct*100)}% · sisa ±${eta} dtk · biarkan tab ini tetap terbuka`);
       }
     }
     await encoder.flush();
     muxer.finalize();
     const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
     const url = URL.createObjectURL(blob);
-    $('download').style.display = 'block';
     const vfile = new File([blob], 'flyover-gowesementara.mp4', { type: 'video/mp4' });
     const canShareVideo = !!(navigator.canShare && navigator.canShare({ files: [vfile] }));
-    $('download').innerHTML = `<video src="${url}" controls playsinline></video><div class="row">
-      <a href="${url}" download="flyover-gowesementara.mp4">⬇ Download video</a>
-      ${canShareVideo ? '<button id="shareVideo">📤 Share video</button>' : ''}</div>`;
+    $('download').innerHTML = `<h3>✅ Video siap</h3><video src="${url}" controls playsinline></video><div class="row">
+      <a class="btn secondary" href="${url}" download="flyover-gowesementara.mp4">⬇ Download</a>
+      ${canShareVideo ? '<button id="shareVideo">📤 Share</button>' : ''}</div>`;
     if (canShareVideo) $('shareVideo').onclick = () => navigator.share({ files: [vfile] }).catch(() => {});
+    $('download').hidden = false;
+    $('download').scrollIntoView({ behavior: 'smooth', block: 'start' });
     const warn = incomplete ? ` ⚠ ${incomplete} frame tile petanya belum lengkap (koneksi lambat), coba generate ulang.` : '';
     status(`Selesai! ${W}×${H} @ ${fps}fps, ${(frames.length / fps).toFixed(1)} detik, ${(blob.size/1e6).toFixed(1)} MB. ${frames.info.note}${warn}`);
   } catch (err) {
-    console.error(err);
-    status('Gagal membuat video: ' + (err.message || err));
+    if (err && err.message === 'cancelled') status('Pembuatan video dibatalkan.');
+    else { console.error(err); status('Gagal membuat video: ' + (err.message || err)); }
   } finally {
     try { encoder.state !== 'closed' && encoder.close(); } catch {}
     restoreRendering();
     labelLock = false;
     recordPR = null;
     applyLayout();
-    $('bar').style.display = 'none';
+    $('bar').hidden = true;
     setBusy(false);
   }
 });
