@@ -38,6 +38,25 @@
   #download { display:none; padding:12px 16px 24px; max-width:1280px; margin:0 auto; }
   #download video { max-width:100%; max-height:70vh; display:block; margin-bottom:8px; }
   #download a { color:var(--accent); font-weight:600; }
+  #download .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  /* ---- stickers / share ---- */
+  #share { max-width:1280px; margin:0 auto; padding:8px 16px 0; }
+  #share h2 { font-size:17px; margin:8px 0 4px; }
+  #share .muted { color:var(--muted); font-size:13px; margin:0 0 10px; }
+  #share .chips { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; font-size:13px; color:var(--muted); }
+  .chip { background:var(--panel); color:var(--text); border:1px solid #2a2f3a; border-radius:999px; padding:6px 12px; font-weight:600; }
+  .chip.on { border-color:#fff; }
+  .chip i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:-1px; }
+  #cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
+  .card { position:relative; border-radius:14px; overflow:hidden; cursor:pointer; outline:3px solid transparent; outline-offset:3px;
+    aspect-ratio:9/16; background:repeating-conic-gradient(#3b3f47 0% 25%, #2a2d33 0% 50%) 50% / 22px 22px; }
+  .card.sel { outline-color:#fff; }
+  .card canvas { width:100%; height:100%; display:block; }
+  .card span { position:absolute; left:8px; bottom:8px; font-size:11px; background:rgba(0,0,0,.6); padding:2px 8px; border-radius:999px; }
+  .card .wait { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--muted); }
+  #shareBar { position:sticky; bottom:0; display:flex; gap:10px; justify-content:center; padding:12px 0 16px; background:linear-gradient(transparent, var(--bg) 35%); }
+  #shareBar button { min-width:96px; }
+  #shareMsg { text-align:center; color:var(--muted); font-size:13px; min-height:18px; padding-bottom:16px; }
 </style>
 </head>
 <body>
@@ -100,6 +119,22 @@
   <canvas id="hud"></canvas>
 </div>
 <div id="download"></div>
+<section id="share" hidden>
+  <h2>Stiker aktivitas</h2>
+  <p class="muted" id="actInfo"></p>
+  <div class="chips">Warna rute:
+    <button class="chip on" data-color="#cdf227"><i style="background:#cdf227"></i>Lime</button>
+    <button class="chip" data-color="#ff6a1a"><i style="background:#ff6a1a"></i>Oranye</button>
+    <button class="chip" data-color="#ffffff"><i style="background:#fff"></i>Putih</button>
+  </div>
+  <div id="cards"></div>
+  <div id="shareBar">
+    <button id="copyBtn" class="secondary">📋 Salin</button>
+    <button id="saveBtn" class="secondary">⬇ Simpan</button>
+    <button id="shareBtn">📤 Bagikan</button>
+  </div>
+  <div id="shareMsg"></div>
+</section>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -264,7 +299,9 @@ function parseGPX(text) {
 
   // smooth path is (re)computed per plan, with a window that depends on the zoom
   const hasHr = coords.some(c => c[4] != null);
-  return { coords, cum, total, drawIdx, res, smooth: res, N, midLat, hasHr };
+  const nameEl = xml.querySelector('trk > name') || xml.querySelector('metadata > name') || xml.querySelector('rte > name');
+  const name = nameEl ? nameEl.textContent.trim() : '';
+  return { coords, cum, total, drawIdx, res, smooth: res, N, midLat, hasHr, name };
 }
 
 function movingAverage(arr, w) {
@@ -337,11 +374,12 @@ $('gpx').addEventListener('change', async e => {
     $('preview').disabled = $('record').disabled = false;
     status(`${f.name}: ${track.coords.length} titik, ${track.total.toFixed(2)} km` + (track.hasHr ? ' · ada data detak jantung' : ''));
     renderHud(statAt(0));
+    refreshStickers(true);
   } catch (err) { status('Gagal membaca GPX: ' + err.message); }
 });
 
 $('style').addEventListener('change', e => { styleReady = false; map.setStyle(buildStyle(e.target.value), { diff: false }); renderHud(); });
-$('brand').addEventListener('input', () => renderHud());
+$('brand').addEventListener('input', () => { renderHud(); refreshStickers(); });
 $('logo').addEventListener('change', async e => {
   const f = e.target.files[0];
   if (!f) { logoImg = null; return renderHud(); }
@@ -349,6 +387,7 @@ $('logo').addEventListener('change', async e => {
   img.src = URL.createObjectURL(f);
   try { await img.decode(); logoImg = img; } catch { logoImg = null; status('Logo tidak bisa dibaca, gunakan PNG/JPG.'); }
   renderHud();
+  refreshStickers();
 });
 
 // make sure the route sources/layers exist (style may have been swapped or still loading)
@@ -798,7 +837,12 @@ $('record').addEventListener('click', async () => {
     const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
     const url = URL.createObjectURL(blob);
     $('download').style.display = 'block';
-    $('download').innerHTML = `<video src="${url}" controls></video><a href="${url}" download="flyover.mp4">⬇ Download flyover.mp4</a>`;
+    const vfile = new File([blob], 'flyover-gowesementara.mp4', { type: 'video/mp4' });
+    const canShareVideo = !!(navigator.canShare && navigator.canShare({ files: [vfile] }));
+    $('download').innerHTML = `<video src="${url}" controls playsinline></video><div class="row">
+      <a href="${url}" download="flyover-gowesementara.mp4">⬇ Download video</a>
+      ${canShareVideo ? '<button id="shareVideo">📤 Bagikan video</button>' : ''}</div>`;
+    if (canShareVideo) $('shareVideo').onclick = () => navigator.share({ files: [vfile] }).catch(() => {});
     const warn = incomplete ? ` ⚠ ${incomplete} frame tile petanya belum lengkap (koneksi lambat), coba generate ulang.` : '';
     status(`Selesai! ${W}×${H} @ ${fps}fps, ${(frames.length / fps).toFixed(1)} detik, ${(blob.size/1e6).toFixed(1)} MB. ${frames.info.note}${warn}`);
   } catch (err) {
@@ -814,6 +858,287 @@ $('record').addEventListener('click', async () => {
     setBusy(false);
   }
 });
+// =====================================================================
+// Activity stickers (Story 1080x1920): transparent overlays + map card,
+// with Copy (clipboard) / Save (PNG) / Share (Web Share API).
+// =====================================================================
+let stickerColor = '#cdf227', stickerSel = 'route-stats', snapCache = null, snapPending = null;
+
+// ---- activity summary from the GPX ----
+function activitySummary(t) {
+  const c = t.coords;
+  const hasEle = c.some(p => p[2] !== 0);
+  // elevation gain with a 3 m hysteresis (ignores GPS/barometer noise)
+  let gain = 0, ref = c[0][2], maxEle = -Infinity;
+  for (const p of c) {
+    maxEle = Math.max(maxEle, p[2]);
+    if (p[2] - ref >= 3) { gain += p[2] - ref; ref = p[2]; } else if (ref - p[2] >= 3) ref = p[2];
+  }
+  // moving time: segments faster than 3 km/h (stops don't count)
+  const hasTime = c[0][3] != null && c[c.length - 1][3] != null;
+  let moving = 0;
+  if (hasTime) for (let i = 1; i < c.length; i++) {
+    if (c[i][3] == null || c[i - 1][3] == null) continue;
+    const dt = (c[i][3] - c[i - 1][3]) / 1000, dd = (t.cum[i] - t.cum[i - 1]) * 1000;
+    if (dt > 0 && dd / dt >= 0.83) moving += dt;
+  }
+  const hrs = c.map(p => p[4]).filter(v => v != null);
+  const start = hasTime ? new Date(c[0][3]) : null;
+  const h = start ? start.getHours() : 7;
+  const defName = h < 11 ? 'Gowes Pagi' : h < 15 ? 'Gowes Siang' : h < 18 ? 'Gowes Sore' : 'Gowes Malam';
+  return {
+    km: t.total, hasEle, gain, maxEle, moving: moving || null,
+    kmh: moving ? t.total / (moving / 3600) : null,
+    avgHr: hrs.length ? hrs.reduce((a, b) => a + b, 0) / hrs.length : null,
+    maxHr: hrs.length ? Math.max(...hrs) : null,
+    start, name: t.name || defName
+  };
+}
+const fmtDur = sec => { const s = Math.round(sec), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60;
+  return h ? `${h}j ${m}m` : `${m}m ${s % 60}d`; };
+const fmtDate = d => d ? d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }) : '';
+function statList(a) {
+  const out = [{ label: 'Jarak', value: `${a.km.toFixed(2)} km` }];
+  if (a.hasEle) out.push({ label: 'Tanjakan', value: `${Math.round(a.gain)} m` });
+  if (a.moving) out.push({ label: 'Waktu', value: fmtDur(a.moving) });
+  if (a.kmh) out.push({ label: 'Kecepatan', value: `${a.kmh.toFixed(1)} km/h` });
+  if (a.hasEle) out.push({ label: 'Elev. Maks', value: `${Math.round(a.maxEle)} m` });
+  if (a.avgHr) out.push({ label: 'Detak Jantung', value: `${Math.round(a.avgHr)} bpm` });
+  return out;
+}
+
+// ---- drawing helpers (all sizes relative to a 1080 px wide sticker) ----
+const brandText = () => ($('brand').value || '').trim();
+function shadow(ctx, k, on = true) {
+  ctx.shadowColor = on ? 'rgba(0,0,0,.4)' : 'transparent'; ctx.shadowBlur = on ? 10 * k : 0; ctx.shadowOffsetY = on ? 2 * k : 0;
+}
+function drawBrand(ctx, x, y, size, align = 'center') {
+  const b = brandText();
+  ctx.font = `800 ${size}px ${FONT_BRAND}`;
+  const tw = b ? ctx.measureText(b).width : 0;
+  const lh = size * 1.3, lw = logoImg ? lh * logoImg.naturalWidth / logoImg.naturalHeight : 0, gap = logoImg && b ? size * 0.3 : 0;
+  const total = lw + gap + tw, x0 = align === 'center' ? x - total / 2 : align === 'right' ? x - total : x;
+  if (logoImg) ctx.drawImage(logoImg, x0, y - size * 0.37 - lh / 2, lw, lh);
+  ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
+  if (b) ctx.fillText(b, x0 + lw + gap, y);
+}
+// route projected (web mercator) into a box, keeping its shape
+function routePath(box) {
+  const pts = track.drawIdx.map(i => {
+    const lon = track.coords[i][0], lat = track.coords[i][1] * Math.PI / 180;
+    return [lon / 360, -Math.log(Math.tan(Math.PI / 4 + lat / 2)) / (2 * Math.PI)];
+  });
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  const sc = Math.min(box.w / ((x1 - x0) || 1e-9), box.h / ((y1 - y0) || 1e-9));
+  const ox = box.x + (box.w - (x1 - x0) * sc) / 2, oy = box.y + (box.h - (y1 - y0) * sc) / 2;
+  return pts.map(([x, y]) => [ox + (x - x0) * sc, oy + (y - y0) * sc]);
+}
+function strokeRoute(ctx, pts, width, color) {
+  ctx.save();
+  ctx.lineJoin = ctx.lineCap = 'round'; ctx.lineWidth = width; ctx.strokeStyle = color;
+  ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(pts[0][0], pts[0][1], width * 0.9, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+function statColumns(ctx, items, cx0, cx1, y, k, valSize = 64) {
+  items.forEach((it, i) => {
+    const cx = cx0 + (cx1 - cx0) * (i + 0.5) / items.length;
+    ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,.85)';
+    ctx.font = `500 ${30 * k}px ${FONT_NUM}`; ctx.fillText(it.label, cx, y);
+    ctx.fillStyle = '#fff'; ctx.font = `600 ${valSize * k}px ${FONT_NUM}`; ctx.fillText(it.value, cx, y + valSize * 1.05 * k);
+  });
+}
+function bikeIcon(ctx, x, y, s, color = '#fff') {   // simple bicycle outline
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = s * 0.09; ctx.lineJoin = ctx.lineCap = 'round';
+  const r = s * 0.24;
+  ctx.beginPath(); ctx.arc(x - s * 0.3, y + s * 0.12, r, 0, Math.PI * 2); ctx.arc(x + s * 0.3 + r, y + s * 0.12, r, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x - s * 0.3, y + s * 0.12); ctx.lineTo(x - s * 0.05, y - s * 0.2); ctx.lineTo(x + s * 0.3, y - s * 0.2);
+  ctx.lineTo(x + s * 0.3 + r, y + s * 0.12); ctx.moveTo(x - s * 0.05, y - s * 0.2); ctx.lineTo(x + s * 0.08, y + s * 0.12);
+  ctx.lineTo(x - s * 0.3, y + s * 0.12); ctx.moveTo(x + s * 0.08, y + s * 0.12); ctx.lineTo(x + s * 0.3, y - s * 0.2);
+  ctx.moveTo(x - s * 0.1, y - s * 0.32); ctx.lineTo(x + s * 0.02, y - s * 0.32); ctx.stroke();
+  ctx.restore();
+}
+
+// ---- templates: draw(ctx, W, H, activity) ----
+const TEMPLATES = [
+  { id: 'route-stats', name: 'Rute + statistik', draw(ctx, W, H, a) {
+    const k = W / 1080; shadow(ctx, k);
+    strokeRoute(ctx, routePath({ x: 170 * k, y: 330 * k, w: 740 * k, h: 1000 * k }), 11 * k, stickerColor);
+    drawBrand(ctx, W / 2, 1480 * k, 56 * k);
+    statColumns(ctx, statList(a).slice(0, 3), 60 * k, W - 60 * k, 1570 * k, k);
+  } },
+  { id: 'stack', name: 'Statistik', draw(ctx, W, H, a) {
+    const k = W / 1080; shadow(ctx, k);
+    const items = statList(a), step = 150 * k, y0 = H / 2 - (items.length * step) / 2 + 60 * k;
+    drawBrand(ctx, W / 2, y0 - 70 * k, 52 * k);
+    items.forEach((it, i) => {
+      const y = y0 + i * step;
+      ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.font = `500 ${32 * k}px ${FONT_NUM}`; ctx.fillText(it.label, W / 2, y);
+      ctx.fillStyle = '#fff'; ctx.font = `600 ${84 * k}px ${FONT_NUM}`; ctx.fillText(it.value, W / 2, y + 86 * k);
+    });
+  } },
+  { id: 'route', name: 'Rute saja', draw(ctx, W, H, a) {
+    const k = W / 1080; shadow(ctx, k);
+    strokeRoute(ctx, routePath({ x: 210 * k, y: 420 * k, w: 660 * k, h: 980 * k }), 12 * k, stickerColor);
+    drawBrand(ctx, W / 2, 1530 * k, 44 * k);
+  } },
+  { id: 'pills', name: 'Pil ringkas', draw(ctx, W, H, a) {
+    const k = W / 1080; shadow(ctx, k, false);
+    const st = statList(a).map(s => `${s.label} ${s.value}`.toUpperCase());
+    const rows = [[brandText().toUpperCase() || 'GOWES', a.start ? a.start.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }).toUpperCase() : null].filter(Boolean)];
+    for (let i = 0; i < st.length; i += 2) rows.push(st.slice(i, i + 2));
+    const ph = 64 * k, gap = 14 * k, pad = 24 * k, y0 = H / 2 - (rows.length * (ph + gap)) / 2;
+    ctx.font = `600 ${34 * k}px ${FONT_NUM}`;
+    rows.forEach((row, r) => {
+      const ws = row.map(t => ctx.measureText(t).width + pad * 2), tot = ws.reduce((a, b) => a + b, 0) + gap * (row.length - 1);
+      let x = (W - tot) / 2; const y = y0 + r * (ph + gap);
+      row.forEach((t, i) => {
+        ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 3 * k;
+        ctx.beginPath(); ctx.roundRect(x, y, ws[i], ph, ph / 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = r === 0 && i === 0 ? stickerColor : '#fff'; ctx.textAlign = 'center';
+        ctx.fillText(t, x + ws[i] / 2, y + ph * 0.68);
+        x += ws[i] + gap;
+      });
+    });
+  } },
+  { id: 'grid', name: 'Grid', draw(ctx, W, H, a) {
+    const k = W / 1080; shadow(ctx, k);
+    const x0 = 80 * k, y0 = 820 * k;
+    bikeIcon(ctx, x0 + 30 * k, y0 - 18 * k, 60 * k, stickerColor);
+    drawBrand(ctx, x0 + 100 * k, y0, 46 * k, 'left');
+    const items = statList(a), cols = 3, cw = (W - 2 * x0) / cols;
+    items.forEach((it, i) => {
+      const x = x0 + (i % cols) * cw, y = y0 + 110 * k + Math.floor(i / cols) * 150 * k;
+      ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.font = `500 ${30 * k}px ${FONT_NUM}`; ctx.fillText(it.label, x, y);
+      ctx.fillStyle = '#fff'; ctx.font = `600 ${62 * k}px ${FONT_NUM}`; ctx.fillText(it.value, x, y + 66 * k);
+    });
+  } },
+  { id: 'map', name: 'Kartu peta', needsMap: true, draw(ctx, W, H, a) {
+    const k = W / 1080;
+    if (!snapCache) { ctx.fillStyle = '#1b2230'; ctx.fillRect(0, 0, W, H); return; }
+    ctx.drawImage(snapCache.canvas, 0, 0, W, H);
+    // route on top of the snapshot, in the chosen colour (dark casing for contrast)
+    const pts = snapCache.pts.map(([x, y]) => [x * W, y * H]);
+    ctx.save(); ctx.lineJoin = ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 14 * k;
+    ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke();
+    ctx.restore();
+    strokeRoute(ctx, pts, 8 * k, stickerColor);
+    const g = ctx.createLinearGradient(0, H * 0.62, 0, H);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.45, 'rgba(0,0,0,.55)'); g.addColorStop(1, 'rgba(0,0,0,.85)');
+    ctx.fillStyle = g; ctx.fillRect(0, H * 0.62, W, H * 0.38);
+    shadow(ctx, k);
+    bikeIcon(ctx, 100 * k, 1548 * k, 52 * k, stickerColor);
+    ctx.textAlign = 'left'; ctx.fillStyle = '#fff'; ctx.font = `800 ${46 * k}px ${FONT_BRAND}`;
+    ctx.fillText(a.name, 150 * k, 1565 * k);
+    ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.font = `500 ${30 * k}px ${FONT_NUM}`;
+    ctx.fillText(fmtDate(a.start), 72 * k, 1615 * k);
+    statColumns(ctx, statList(a).slice(0, 3), 20 * k, W - 20 * k, 1700 * k, k, 58);
+    drawBrand(ctx, W - 60 * k, 140 * k, 40 * k, 'right');
+    ctx.textAlign = 'right'; ctx.font = `${18 * k}px system-ui, sans-serif`; ctx.fillStyle = 'rgba(255,255,255,.7)';
+    ctx.fillText(ATTRIB.satellite, W - 24 * k, H - 22 * k);
+  } }
+];
+
+// ---- top-down satellite snapshot (separate hidden map, 540x960 @2x = 1080x1920) ----
+async function mapSnapshot() {
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;left:-20000px;top:0;width:540px;height:960px;';
+  document.body.appendChild(el);
+  const style = buildStyle('satellite'); delete style.terrain; delete style.sky;
+  style.layers = style.layers.filter(l => l.id !== 'road-lines');
+  const m = new maplibregl.Map({ container: el, style, interactive: false, attributionControl: false,
+    preserveDrawingBuffer: true, pixelRatio: 2, fadeDuration: 0, center: [0, 0], zoom: 1 });
+  try {
+    await new Promise((res, rej) => { m.once('load', res); m.once('error', e => rej(e.error || e)); });
+    const cam = m.cameraForBounds(trackBounds(), { padding: { top: 260, bottom: 400, left: 50, right: 50 } });
+    m.jumpTo(cam);
+    await Promise.race([new Promise(r => m.once('idle', r)), sleep(25000)]);
+    const c = document.createElement('canvas'); c.width = 1080; c.height = 1920;
+    c.getContext('2d').drawImage(m.getCanvas(), 0, 0, 1080, 1920);
+    const pts = track.drawIdx.map(i => { const p = m.project([track.coords[i][0], track.coords[i][1]]); return [p.x / 540, p.y / 960]; });
+    return { canvas: c, pts };
+  } finally { m.remove(); el.remove(); }
+}
+
+// ---- cards UI ----
+function drawTemplate(tpl, W, H) {
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  tpl.draw(ctx, W, H, activitySummary(track));
+  return c;
+}
+function refreshStickers(newTrack = false) {
+  if (!track) return;
+  $('share').hidden = false;
+  const a = activitySummary(track);
+  $('actInfo').textContent = `${a.name}${a.start ? ' · ' + fmtDate(a.start) : ''} — pilih desain, lalu Salin / Simpan / Bagikan. Stiker transparan bisa ditempel di foto atau Instagram Story.`;
+  if (newTrack) { snapCache = null; snapPending = null; }
+  const cards = $('cards');
+  cards.innerHTML = '';
+  for (const tpl of TEMPLATES) {
+    const card = document.createElement('div');
+    card.className = 'card' + (tpl.id === stickerSel ? ' sel' : '');
+    const cv = document.createElement('canvas'); cv.width = 360; cv.height = 640;
+    tpl.draw(cv.getContext('2d'), 360, 640, a);
+    card.append(cv);
+    const lab = document.createElement('span'); lab.textContent = tpl.name; card.append(lab);
+    if (tpl.needsMap && !snapCache) { const w = document.createElement('div'); w.className = 'wait'; w.textContent = 'memuat peta…'; card.append(w); }
+    card.onclick = () => { stickerSel = tpl.id; for (const el of cards.children) el.classList.toggle('sel', el === card); };
+    cards.append(card);
+  }
+  if (!snapCache && !snapPending) {
+    const forTrack = track;
+    snapPending = mapSnapshot()
+      .then(r => { if (track === forTrack) { snapCache = r; refreshStickers(); } })
+      .catch(err => { console.warn('map snapshot failed', err); })
+      .finally(() => { snapPending = null; });
+  }
+}
+document.querySelectorAll('#share .chip').forEach(b => b.onclick = () => {
+  stickerColor = b.dataset.color;
+  document.querySelectorAll('#share .chip').forEach(x => x.classList.toggle('on', x === b));
+  refreshStickers();
+});
+
+const shareMsg = t => { $('shareMsg').textContent = t; };
+function selectedSticker() {
+  const tpl = TEMPLATES.find(t => t.id === stickerSel);
+  if (tpl.needsMap && !snapCache) { shareMsg('Peta masih dimuat, tunggu sebentar…'); return null; }
+  return { tpl, canvas: drawTemplate(tpl, 1080, 1920) };
+}
+const fileName = id => `${(brandText() || 'gowes').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${id}.png`;
+const toBlob = c => new Promise(r => c.toBlob(r, 'image/png'));
+
+$('copyBtn').onclick = async () => {
+  const s = selectedSticker(); if (!s) return;
+  try {
+    if (!navigator.clipboard || !window.ClipboardItem) throw new Error('unsupported');
+    // pass the promise directly so Safari keeps the user gesture
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': toBlob(s.canvas) })]);
+    shareMsg('Tersalin ✓ — tempel (paste) di Instagram Story, WhatsApp, atau aplikasi edit foto.');
+  } catch (e) {
+    shareMsg('Browser ini belum bisa menyalin gambar. Pakai Simpan atau Bagikan.');
+  }
+};
+$('saveBtn').onclick = async () => {
+  const s = selectedSticker(); if (!s) return;
+  const url = URL.createObjectURL(await toBlob(s.canvas));
+  const a = document.createElement('a'); a.href = url; a.download = fileName(s.tpl.id); a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  shareMsg('Tersimpan ✓ (PNG 1080×1920).');
+};
+$('shareBtn').onclick = async () => {
+  const s = selectedSticker(); if (!s) return;
+  const file = new File([await toBlob(s.canvas)], fileName(s.tpl.id), { type: 'image/png' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); shareMsg(''); } catch { /* cancelled */ }
+  } else shareMsg('Bagikan langsung hanya tersedia di HP (Chrome/Safari). Pakai Simpan lalu unggah manual.');
+};
+loadFonts().then(() => { if (track) refreshStickers(); });
+
 renderHud(null);
 loadFonts().then(() => renderHud());
 </script>
