@@ -841,7 +841,6 @@ let logoImg = null, lastStats = null;
 const FONT_NUM = '"Barlow Condensed", "Arial Narrow", system-ui, sans-serif';
 const FONT_BRAND = 'Montserrat, system-ui, sans-serif';
 
-const fmtClock = sec => { const m = Math.floor(sec / 60); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
 
 function drawHud(ctx, W, H, s, attrib) {
   const k = Math.min(W, H) / 1080, vertical = H > W;
@@ -873,12 +872,11 @@ function drawHud(ctx, W, H, s, attrib) {
   }
 
   ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 12 * k; ctx.shadowOffsetY = 2 * k;
-  // stats row: DISTANCE / ELEV GAIN / TIME (speed when there is no elevation)
+  // stats row: DISTANCE / ELEV GAIN / SPEED (current speed, averaged over ±150 m)
   if (s) {
     const items = [{ l: 'DISTANCE', v: s.d.toFixed(1), u: 'KM' }];
     if (track && track.profile) items.push({ l: 'ELEV GAIN', v: String(Math.round(s.gain || 0)), u: 'M' });
-    else if (s.speed != null) items.push({ l: 'SPEED', v: s.speed.toFixed(1), u: 'KM/H' });
-    if (s.elapsed != null) items.push({ l: 'TIME', v: fmtClock(s.elapsed), u: 'H' });
+    if (s.speed != null) items.push({ l: 'SPEED', v: s.speed.toFixed(1), u: 'KM/H' });
     const rowW = vertical ? W - 60 * k : Math.min(W * 0.7, items.length * 400 * k), x0 = (W - rowW) / 2;
     const labelY = vertical ? H * 0.205 : H * 0.235;
     items.forEach((it, i) => {
