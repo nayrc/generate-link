@@ -68,7 +68,9 @@
     const o = { bike: state.bike, bikeMass: state.bikeMass, climb: state.climb, road: state.road, restMin: state.rest };
     const groups = state.groups.map((g, i) => ({ name: g.name.trim() || `Kelompok ${i + 1}`, weight: g.weight, flatKmh: g.flat }));
     const results = C.simulateAll(path, groups, o);
-    model = { path, o, groups, results, stats: C.routeStats(path), rows: C.checkpoints(path, results), climbs: C.detectClimbs(path, results), startMin: startMinutes() };
+    const stats = C.routeStats(path);
+    stats.gain = lastTrack.gain; stats.loss = lastTrack.loss;     // same number as the video and stickers
+    model = { path, o, groups, results, stats, rows: C.checkpoints(path, results), climbs: C.detectClimbs(path, results), startMin: startMinutes() };
     if (state.sel >= results.length) state.sel = 0;
   }
 

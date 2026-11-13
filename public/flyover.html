@@ -637,14 +637,9 @@ function buildTrack(raw, name) {
 
   // smooth path is (re)computed per plan, with a window that depends on the zoom
   const hasHr = coords.some(c => c[4] != null);
-  // cumulative elevation gain per point (3 m hysteresis against GPS noise)
-  const gainCum = new Float64Array(coords.length);
-  let ref = coords[0][2], g = 0;
-  for (let i = 0; i < coords.length; i++) {
-    const e = coords[i][2];
-    if (e - ref >= 3) { g += e - ref; ref = e; } else if (ref - e >= 3) ref = e;
-    gainCum[i] = g;
-  }
+  // elevation gain: one rule shared by the video HUD, the stickers and the simulation (see SimCore.elevationGain)
+  const eg = SimCore.elevationGain(coords.map(c => c[2]), cum);
+  const gainCum = eg.perPoint;
   // elevation profile for the HUD (lightly smoothed)
   const hasEle = coords.some(c => c[2] !== 0);
   let profile = null;
@@ -654,7 +649,7 @@ function buildTrack(raw, name) {
     const sm = raw.map((_, i) => { let a = 0, c = 0; for (let j = Math.max(0, i - 2); j <= Math.min(n, i + 2); j++) { a += raw[j]; c++; } return a / c; });
     profile = { e: sm, min: Math.min(...sm), max: Math.max(...coords.map(c => c[2])) };
   }
-  return { coords, cum, total, drawIdx, res, smooth: res, N, midLat, hasHr, name: name || '', gainCum, profile };
+  return { coords, cum, total, drawIdx, res, smooth: res, N, midLat, hasHr, name: name || '', gainCum, gain: eg.gain, loss: eg.loss, profile };
 }
 
 function movingAverage(arr, w) {
@@ -1395,12 +1390,9 @@ const CARD_THEMES = {
 function activitySummary(t) {
   const c = t.coords;
   const hasEle = c.some(p => p[2] !== 0);
-  // elevation gain with a 3 m hysteresis (ignores GPS/barometer noise)
-  let gain = 0, ref = c[0][2], maxEle = -Infinity;
-  for (const p of c) {
-    maxEle = Math.max(maxEle, p[2]);
-    if (p[2] - ref >= 3) { gain += p[2] - ref; ref = p[2]; } else if (ref - p[2] >= 3) ref = p[2];
-  }
+  const gain = t.gain;                                   // same rule as the video HUD and the simulation
+  let maxEle = -Infinity;
+  for (const p of c) maxEle = Math.max(maxEle, p[2]);
   // moving time: segments faster than 3 km/h (stops don't count)
   const hasTime = c[0][3] != null && c[c.length - 1][3] != null;
   let moving = 0;

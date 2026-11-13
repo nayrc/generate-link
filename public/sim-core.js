@@ -38,6 +38,55 @@
     return (massKg * G * bike.crr * v + 0.5 * RHO * bike.cda * v * v * v) / ETA;
   }
 
+  // ---- elevation gain / loss (one rule for video, stickers and simulation) ----
+  // Resample by distance (5 m), smooth +-25 m, then count only rises/falls of at least TH metres.
+  // Distance based, so it does not depend on the recording rate. TH is 1 m for clean data (barometer):
+  // on a 146 km ride this gives 1010 m, Strava says 1010 m (a fixed 3 m threshold gave only 857 m).
+  // For noisy data (GPS-only altitude) TH grows up to 3 m so that noise is not counted as climbing.
+  function noiseSigma(ele, cumKm) {
+    // only dense recordings (<= 10 m between points) can tell noise from terrain
+    const d = [];
+    for (let i = 1; i < ele.length - 1; i++) {
+      if (cumKm[i + 1] - cumKm[i - 1] > 0.02) continue;
+      d.push(Math.abs(ele[i] - (ele[i - 1] + ele[i + 1]) / 2));
+    }
+    if (d.length < 200) return 0;
+    d.sort((a, b) => a - b);
+    return d[d.length >> 1] / 0.83;                                   // median |2nd difference| -> sigma
+  }
+  // ele: elevations (m), cumKm: cumulative distance (km) of each point.
+  // returns { gain, loss, perPoint } where perPoint[i] = gain accumulated up to point i.
+  function elevationGain(ele, cumKm) {
+    const n = ele.length, perPoint = new Float64Array(n);
+    const total = cumKm[n - 1];
+    if (n < 2 || !(total > 0)) return { gain: 0, loss: 0, perPoint };
+    const STEP = 0.005, K = 5;                               // km, samples either side
+    const TH = clamp(4 * noiseSigma(ele, cumKm), 1, 3);      // metres
+    const m = Math.max(2, Math.round(total / STEP));
+    const step = total / m;
+    const r = new Float64Array(m + 1);
+    let j = 0;
+    for (let i = 0; i <= m; i++) {
+      const d = step * i;
+      while (j < n - 2 && cumKm[j + 1] < d) j++;
+      const seg = cumKm[j + 1] - cumKm[j] || 1, t = clamp((d - cumKm[j]) / seg, 0, 1);
+      r[i] = ele[j] + (ele[j + 1] - ele[j]) * t;
+    }
+    const pre = new Float64Array(m + 2);
+    for (let i = 0; i <= m; i++) pre[i + 1] = pre[i] + r[i];
+    const g = new Float64Array(m + 1);
+    let gain = 0, loss = 0, ref = null;
+    for (let i = 0; i <= m; i++) {
+      const a = Math.max(0, i - K), b = Math.min(m, i + K);
+      const v = (pre[b + 1] - pre[a]) / (b - a + 1);
+      if (ref === null) ref = v;
+      if (v - ref >= TH) { gain += v - ref; ref = v; } else if (ref - v >= TH) { loss += ref - v; ref = v; }
+      g[i] = gain;
+    }
+    for (let i = 0; i < n; i++) perPoint[i] = g[Math.min(m, Math.round(cumKm[i] / step))];
+    return { gain, loss, perPoint, threshold: TH };
+  }
+
   // ---- route -> evenly spaced path with smoothed elevation and per-segment grade ----
   function buildPath(coords, cum, total) {
     const ds0 = total > 150 ? 0.1 : 0.05;                     // km
@@ -204,7 +253,7 @@
     return L.join('\n');
   }
 
-  const api = { BIKES, CLIMB_STYLE, ROAD_COND, solveSpeed, flatPower, buildPath, routeStats, simulate, simulateAll,
+  const api = { BIKES, CLIMB_STYLE, ROAD_COND, solveSpeed, flatPower, elevationGain, buildPath, routeStats, simulate, simulateAll,
     detectClimbs, checkpointStep, checkpoints, fmtDuration, clock, clockText, buildSummary };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.SimCore = api;

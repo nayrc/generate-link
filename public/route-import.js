@@ -228,7 +228,7 @@
     if (total > MAX_ROUTE_KM) throw new Error(`Rute terlalu panjang (${Math.round(total)} km). Maksimal ${MAX_ROUTE_KM} km.`);
     const z = total > 150 ? 12 : 13;
     const el = await sampleElevations(base, { z, onProgress: (d, t) => onStatus && onStatus(`Mengambil data elevasi… ${Math.round(d / t * 100)}%`) });
-    const w = 3, sm = el.map((_, i) => { let a = 0, c = 0; for (let j = Math.max(0, i - w); j <= Math.min(el.length - 1, i + w); j++) { a += el[j]; c++; } return a / c; });
+    const w = 1, sm = el.map((_, i) => { let a = 0, c = 0; for (let j = Math.max(0, i - w); j <= Math.min(el.length - 1, i + w); j++) { a += el[j]; c++; } return a / c; });
     return base.map((p, i) => [p[0], p[1], sm[i], p[3], p[4]]);
   }
 
