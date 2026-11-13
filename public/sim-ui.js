@@ -248,7 +248,7 @@
   function summaryText() {
     const brand = (document.getElementById('brand') && document.getElementById('brand').value || '').trim();
     return C.buildSummary({
-      routeName: lastTrack.name || el('fiName').textContent, stats: model.stats, results: model.results, rows: model.rows,
+      routeName: (typeof rideTitle === 'function' && rideTitle()) || lastTrack.name || el('fiName').textContent, stats: model.stats, results: model.results, rows: model.rows,
       startMin: model.startMin, restMin: state.rest, brand, bikeLabel: C.BIKES[state.bike].label
     });
   }

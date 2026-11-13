@@ -48,9 +48,11 @@
   .drop .icon { font-size:40px; }
   .drop h2 { margin:8px 0 4px; font-size:20px; }
   .drop p { margin:0 auto 18px; max-width:420px; color:var(--muted); font-size:14px; }
-  .fileinfo { display:flex; align-items:center; gap:12px; padding:12px 14px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); }
+  .fileinfo { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:12px 14px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); }
   .fileinfo .ico { font-size:22px; }
   .fileinfo .meta { flex:1; min-width:0; }
+  .fileinfo .titlerow { flex-basis:100%; }
+  .fileinfo .titlerow label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
   .fileinfo b { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #uploadMsg { color:var(--danger); font-size:13px; margin-top:8px; }
 
@@ -255,6 +257,10 @@
       <div class="ico">🚴</div>
       <div class="meta"><b id="fiName"></b><div class="muted" id="fiStats"></div></div>
       <button class="ghost small" id="changeRoute">Ganti</button>
+      <div class="titlerow">
+        <label for="rideTitle">Judul aktivitas (dipakai di stiker &amp; ringkasan)</label>
+        <input type="text" id="rideTitle" maxlength="60" placeholder="Morning Ride" autocomplete="off">
+      </div>
     </div>
     <div id="intakeProgress" class="muted" hidden></div>
     <div id="uploadMsg"></div>
@@ -733,10 +739,26 @@ function showIntake(on) {
   else if (track) showTab(currentTab);
 }
 $('changeRoute').onclick = () => showIntake(true);
+let titleTimer;
+$('rideTitle').addEventListener('input', e => {
+  if (!track) return;
+  track.userTitle = e.target.value;
+  clearTimeout(titleTimer);
+  titleTimer = setTimeout(() => refreshStickers(), 120);
+});
 $('cancelIntake').onclick = () => showIntake(false);
 
+// a track name that is really a file name (Samsung Health, Garmin exports...) is not a title
+const cleanName = n => {
+  n = (n || '').trim();
+  return !n || /\.(gpx|kml|kmz|tcx|fit)$/i.test(n) || /^\d{8}[_\-T ]?\d{4,6}/.test(n) ? '' : n;
+};
+// the title shown on stickers / summaries: what the user typed, else the route name, else "Morning Ride" etc.
+const rideTitle = () => track ? activitySummary(track).name : '';
+
 async function acceptRoute({ raw, name, label, source, noElevation, via }) {
-  const t = buildTrack(raw, name);
+  const t = buildTrack(raw, cleanName(name));
+  t.userTitle = '';
   Object.assign(t, { source, noElevation: !!noElevation, via: via || null });
   track = t;
   const a = activitySummary(track);
@@ -745,6 +767,8 @@ async function acceptRoute({ raw, name, label, source, noElevation, via }) {
     track.hasHr ? '❤ ada detak jantung' : ''].filter(Boolean).join(' · ');
   $('download').hidden = true;
   $('gmLink').value = '';
+  $('rideTitle').value = '';
+  $('rideTitle').placeholder = activitySummary(track).name;
   pendingFit = true;
   showIntake(false);
   showTab(track.coords[0][3] != null ? 'video' : 'sim');      // recorded rides -> video, planned routes -> simulation
@@ -772,7 +796,7 @@ async function loadRouteFile(f) {
     if (!raw.some(p => p[2] !== 0)) {                          // no elevation in the file: take it from the map's terrain data
       try { raw = await RouteImport.withElevation(raw, m => setIntakeBusy(true, m)); } catch { noElevation = true; }
     }
-    await acceptRoute({ raw, name: parsed.name || f.name.replace(/\.[^.]+$/, ''), label: f.name, source: isKml ? 'kml' : 'gpx', noElevation });
+    await acceptRoute({ raw, name: parsed.name, label: f.name, source: isKml ? 'kml' : 'gpx', noElevation });
   } catch (err) {
     $('uploadMsg').textContent = 'Gagal memuat rute: ' + err.message;
   } finally { setIntakeBusy(false); }
@@ -1410,7 +1434,7 @@ function activitySummary(t) {
     kmh: moving ? t.total / (moving / 3600) : null,
     avgHr: hrs.length ? hrs.reduce((a, b) => a + b, 0) / hrs.length : null,
     maxHr: hrs.length ? Math.max(...hrs) : null,
-    start, name: t.name || defName
+    start, name: (t.userTitle || '').trim() || t.name || defName
   };
 }
 const fmtDur = sec => { const s = Math.round(sec), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60;
@@ -1550,7 +1574,9 @@ const TEMPLATES = [
     ctx.fillStyle = g; ctx.fillRect(0, H * 0.62, W, H * 0.38);
     shadow(ctx, k);
     bikeIcon(ctx, 100 * k, 1548 * k, 52 * k, stickerColor);
-    ctx.textAlign = 'left'; ctx.fillStyle = '#fff'; ctx.font = `800 ${46 * k}px ${FONT_BRAND}`;
+    ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
+    let tsz = 46 * k;
+    do { ctx.font = `800 ${tsz}px ${FONT_BRAND}`; tsz -= 2 * k; } while (ctx.measureText(a.name).width > W - 150 * k - 50 * k && tsz > 24 * k);
     ctx.fillText(a.name, 150 * k, 1565 * k);
     ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.font = `500 ${30 * k}px ${FONT_NUM}`;
     ctx.fillText(fmtDate(a.start), 72 * k, 1615 * k);
@@ -1627,6 +1653,7 @@ function wrapLines(ctx, text, maxW) {
 }
 // "From A to B" from the nearest named places at start/finish (OpenStreetMap), else the activity name
 function activityTitle(a) {
+  if (track && (track.userTitle || '').trim()) return track.userTitle.trim();
   const p = snaps.places;
   if (p && p.from && p.to) return p.from === p.to ? `Loop from ${p.from}` : `From ${p.from} to ${p.to}`;
   return a.name;
