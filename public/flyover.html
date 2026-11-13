@@ -54,9 +54,21 @@
   .fileinfo b { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #uploadMsg { color:var(--danger); font-size:13px; margin-top:8px; }
 
+  .drop .or { display:flex; align-items:center; gap:12px; margin:18px auto 14px; max-width:420px; color:var(--muted); font-size:13px; }
+  .drop .or::before, .drop .or::after { content:''; flex:1; height:1px; background:var(--line); }
+  .linkrow { display:flex; gap:8px; max-width:520px; margin:0 auto; }
+  .linkrow input { flex:1; min-width:0; }
+  .linkrow button { flex:none; }
+  .howto { max-width:520px; margin:14px auto 0; text-align:left; font-size:13px; color:var(--muted); }
+  .howto summary { cursor:pointer; text-align:center; }
+  .howto ol { padding-left:20px; margin:10px 0 6px; }
+  .howto code { background:var(--panel2); padding:1px 5px; border-radius:5px; }
+  #intakeProgress { margin-top:10px; padding:10px 14px; background:var(--panel); border:1px solid var(--line); border-radius:12px; }
+  #cancelIntake { margin-top:14px; }
+
   /* tabs */
   .tabs { display:flex; gap:6px; margin:14px 0; padding:4px; background:var(--panel); border:1px solid var(--line); border-radius:14px; }
-  .tabs button { flex:1; background:transparent; color:var(--muted); min-height:40px; }
+  .tabs button { flex:1; background:transparent; color:var(--muted); min-height:40px; padding:0 6px; white-space:nowrap; font-size:14px; }
   .tabs button.on { background:var(--panel2); color:var(--text); box-shadow:0 1px 0 rgba(255,255,255,.04) inset; }
 
   /* video tab */
@@ -133,11 +145,72 @@
   #shareBar .actions button { flex:1; }
   #shareMsg { text-align:center; }
 
+  /* ---------- simulation ---------- */
+  .sim-layout { display:grid; gap:12px; grid-template-columns:minmax(0, 1fr); }
+  .sim-settings, .sim-results { min-width:0; }
+  .sim-results > .group, .sim-results > .simcards { margin-top:12px; }
+  .sim-results > :first-child { margin-top:0; }
+  input[type=time], input[type=number] { min-height:44px; background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:12px; padding:0 12px; font:inherit; color-scheme:dark; }
+  input[type=time] { width:100%; }
+  .notice { padding:10px 14px; border-radius:12px; background:#2a2412; border:1px solid #6b5a1d; color:#f1d98a; font-size:13px; }
+  .gcard { border:1px solid var(--line); background:var(--panel2); border-radius:14px; padding:12px; }
+  .gcard + .gcard { margin-top:10px; }
+  .ghead { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+  .ghead .dot { width:12px; height:12px; border-radius:50%; flex:none; }
+  .ghead input.gname { flex:1; min-width:0; min-height:40px; background:var(--panel); }
+  .ghead button { min-height:40px; width:40px; padding:0; flex:none; }
+  .grow { display:flex; align-items:center; gap:10px; margin-bottom:10px; font-size:14px; }
+  .grow input { width:86px; min-height:40px; background:var(--panel); text-align:center; }
+  .gcard .lbl { font-size:14px; }
+  .gcard .qs { display:flex; gap:6px; margin-top:6px; }
+  .gcard .qs button { flex:1; min-height:32px; font-size:12px; padding:0 6px; border-radius:8px; background:var(--panel); color:var(--muted); border:1px solid var(--line); font-weight:600; }
+  .simcards { display:grid; gap:10px; grid-template-columns:minmax(0, 1fr); }
+  .scard { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:14px; position:relative; overflow:hidden; }
+  .scard::before { content:''; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--c); }
+  .scard .nm { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+  .scard .nm b { font-size:15px; } .scard .nm span { color:var(--muted); font-size:12px; }
+  .scard .big { font-size:34px; font-weight:800; line-height:1.1; margin:6px 0 2px; letter-spacing:-.5px; }
+  .scard .eta { color:var(--text); font-size:14px; }
+  .scard .eta b { color:var(--c); }
+  .scard .kv { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; margin-top:12px; padding-top:10px; border-top:1px solid var(--line); }
+  .scard .kv div { font-size:12px; color:var(--muted); } .scard .kv b { display:block; font-size:15px; color:var(--text); }
+  .facts { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+  .facts div { font-size:12px; color:var(--muted); } .facts b { display:block; font-size:18px; color:var(--text); }
+  .chartwrap { position:relative; }
+  canvas.chart { width:100%; height:230px; display:block; touch-action:pan-y; }
+  canvas.chart.short { height:170px; }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--muted); margin-top:8px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
+  #simTip { margin-top:8px; min-height:18px; }
+  #simPick { margin-bottom:8px; }
+  .tablewrap { overflow-x:auto; margin:0 -4px; }
+  #simTable { border-collapse:collapse; width:100%; font-size:13px; white-space:nowrap; }
+  #simTable th, #simTable td { padding:9px 6px; text-align:right; border-bottom:1px solid var(--line); }
+  #simTable th:first-child, #simTable td:first-child { text-align:left; }
+  #simTable th { color:var(--muted); font-weight:600; font-size:12px; }
+  #simTable td small { color:var(--muted); margin-left:3px; font-size:11px; }
+  #simTable tr.fin td { font-weight:700; }
+  @media (max-width:520px) { #simTable .el { display:none; } }
+  .climb { display:grid; gap:2px; padding:10px 0; border-bottom:1px solid var(--line); font-size:14px; }
+  .climb:last-child { border-bottom:0; padding-bottom:0; }
+  .climb .t { font-weight:700; }
+  .climb .m { color:var(--muted); font-size:13px; }
+  ul.assume { margin:8px 0 0; padding-left:18px; color:var(--muted); font-size:13px; }
+  ul.assume li + li { margin-top:6px; }
+  #simBar { margin-top:16px; }
+
   /* ---------- tablet / desktop ---------- */
   @media (min-width:700px) {
     #cards { grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); }
   }
+  @media (min-width:700px) {
+    .simcards { grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); }
+    .facts { grid-template-columns:repeat(4, minmax(0, 1fr)); }
+  }
   @media (min-width:960px) {
+    .sim-layout { grid-template-columns:360px minmax(0, 1fr); align-items:start; }
+    .sim-settings { position:sticky; top:72px; max-height:calc(100vh - 90px); overflow:auto; padding-right:2px; }
+    #simBar { width:calc(100% - 372px); margin:16px 0 0 auto; }
     main { padding:24px; }
     .video-layout { grid-template-columns:minmax(0, 1fr) 380px; align-items:start; }
     .preview-col { position:sticky; top:72px; }
@@ -159,22 +232,138 @@
   <section id="uploadCard">
     <div class="drop" id="drop">
       <div class="icon">🗺️</div>
-      <h2>Upload file GPX</h2>
-      <p>Buat video flyover 3D dan stiker aktivitas dari file GPX (Strava, Garmin, COROS, komoot, dll). Tarik file ke sini atau pilih dari perangkat.</p>
-      <label class="btn">📂 Pilih file GPX<input type="file" id="gpx" accept=".gpx,application/gpx+xml"></label>
+      <h2>Masukkan rute</h2>
+      <p>Simulasi waktu gowes, video flyover 3D, dan stiker aktivitas. Upload file rute, atau tempel link rute dari Google Maps.</p>
+      <label class="btn" id="pickBtn">📂 Pilih file GPX / KML<input type="file" id="gpx" accept=".gpx,.kml,application/gpx+xml,application/vnd.google-earth.kml+xml,text/xml,application/xml"></label>
+      <div class="or"><span>atau</span></div>
+      <div class="linkrow">
+        <input type="text" id="gmLink" placeholder="Tempel link Google Maps…" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button id="gmGo" class="secondary">Ambil rute</button>
+      </div>
+      <details class="howto">
+        <summary>Cara mendapatkan link dari Google Maps</summary>
+        <ol>
+          <li>Buka Google Maps, pilih <b>Rute</b> (Directions), isi titik awal dan tujuan (tambah titik singgah kalau perlu).</li>
+          <li>Tekan <b>Bagikan</b> (Share) lalu <b>Salin link</b>.</li>
+          <li>Tempel di kolom di atas. Link pendek <code>maps.app.goo.gl</code> juga bisa.</li>
+        </ol>
+        <p>Rute disusun ulang di jalan sepeda dari data OpenStreetMap, jadi bisa sedikit berbeda dari rute Google. Untuk rute yang persis, pakai file GPX/KML.</p>
+      </details>
+      <button id="cancelIntake" class="ghost small" hidden>Batal, kembali ke rute tadi</button>
     </div>
     <div class="fileinfo" id="fileInfo" hidden>
       <div class="ico">🚴</div>
       <div class="meta"><b id="fiName"></b><div class="muted" id="fiStats"></div></div>
-      <label class="btn ghost small" for="gpx">Ganti</label>
+      <button class="ghost small" id="changeRoute">Ganti</button>
     </div>
+    <div id="intakeProgress" class="muted" hidden></div>
     <div id="uploadMsg"></div>
   </section>
 
   <nav class="tabs" id="tabs" hidden>
-    <button data-tab="video" class="on">🎬 Video</button>
+    <button data-tab="sim" class="on">📊 Simulasi</button>
+    <button data-tab="video">🎬 Video</button>
     <button data-tab="stickers">🖼️ Stiker</button>
   </nav>
+
+  <!-- simulation -->
+  <section id="tab-sim" hidden>
+    <div class="sim-layout">
+      <div class="sim-settings">
+        <div class="group">
+          <h3>Kelompok pesepeda</h3>
+          <div id="simGroupList"></div>
+          <button id="simAddGroup" class="ghost small">＋ Tambah kelompok</button>
+          <p class="muted" style="margin:10px 0 0"><b>Kecepatan di jalan datar</b> = kecepatan santai yang biasa dicapai di sepeda yang dipilih. Tambah beberapa kelompok untuk membandingkan, misalnya santai, sedang, dan cepat di rute yang sama.</p>
+        </div>
+        <div class="group">
+          <h3>Sepeda &amp; jalan</h3>
+          <div class="field">
+            <div class="lbl">Jenis sepeda</div>
+            <select id="simBike" class="segify" data-cols="2">
+              <option value="road">Road bike</option>
+              <option value="gravel">Gravel / hybrid</option>
+              <option value="mtb">MTB</option>
+              <option value="city">Lipat / city</option>
+            </select>
+          </div>
+          <div class="field">
+            <div class="lbl">Berat sepeda + perlengkapan <b id="simBikeMassVal">11 kg</b></div>
+            <input type="range" id="simBikeMass" min="6" max="30" step="1" value="11">
+          </div>
+          <div class="field">
+            <div class="lbl">Gaya di tanjakan</div>
+            <select id="simClimb" class="segify" data-cols="3">
+              <option value="hemat">Hemat</option>
+              <option value="normal" selected>Normal</option>
+              <option value="ngotot">Ngotot</option>
+            </select>
+          </div>
+          <div class="field">
+            <div class="lbl">Kondisi jalan (lampu merah, macet)</div>
+            <select id="simRoad" class="segify" data-cols="3">
+              <option value="lancar">Lancar</option>
+              <option value="normal" selected>Normal</option>
+              <option value="ramai">Ramai</option>
+            </select>
+          </div>
+        </div>
+        <div class="group">
+          <h3>Waktu</h3>
+          <div class="field">
+            <div class="lbl">Jam berangkat</div>
+            <input type="time" id="simStart" value="06:00">
+          </div>
+          <div class="field">
+            <div class="lbl">Total istirahat <b id="simRestVal">30 mnt</b></div>
+            <input type="range" id="simRest" min="0" max="300" step="5" value="30">
+          </div>
+        </div>
+      </div>
+      <div class="sim-results" id="simResults">
+        <div id="simNotice" class="notice" hidden></div>
+        <div id="simCards" class="simcards"></div>
+        <div class="group"><h3>Rute</h3><div id="simFacts" class="facts"></div></div>
+        <div class="group">
+          <h3>Profil elevasi &amp; kecepatan</h3>
+          <div class="chips" id="simPick"></div>
+          <div class="chartwrap"><canvas id="simChart" class="chart"></canvas></div>
+          <div class="muted" id="simTip">Sentuh grafik untuk melihat detail di titik itu.</div>
+        </div>
+        <div class="group" id="simGapWrap" hidden>
+          <h3>Selisih waktu antar kelompok</h3>
+          <div class="chartwrap"><canvas id="simGap" class="chart short"></canvas></div>
+          <div class="legend" id="simGapLegend"></div>
+        </div>
+        <div class="group">
+          <h3>Perkiraan jam lewat</h3>
+          <div class="tablewrap"><table id="simTable"></table></div>
+        </div>
+        <div class="group">
+          <h3>Tanjakan terberat</h3>
+          <div id="simClimbs"></div>
+        </div>
+        <details class="group">
+          <summary>Asumsi &amp; batasan</summary>
+          <ul class="assume">
+            <li>Dihitung dengan fisika sepeda: gaya berat, hambatan angin, dan hambatan gelinding, dengan tenaga konstan sesuai kecepatan di jalan datar.</li>
+            <li>Di tanjakan pesepeda biasanya mengayuh lebih keras; pengaturan <b>Gaya di tanjakan</b> mengatur seberapa besar.</li>
+            <li>Turunan dibatasi kecepatan maksimum sesuai jenis sepeda. Tenaga turun sedikit setelah 1 jam pertama (kelelahan).</li>
+            <li>Tanpa angin, tanpa lalu lintas khusus, dan permukaan jalan dianggap baik. Istirahat dibagi rata sepanjang rute.</li>
+            <li>Data elevasi dari peta digital (bisa beda beberapa meter dari alat GPS), jadi tanjakan total bisa sedikit berbeda dari Strava.</li>
+            <li>Perkiraan wajar meleset sekitar <b>10–15%</b>. Pakai sebagai gambaran, bukan jadwal pasti.</li>
+          </ul>
+        </details>
+      </div>
+    </div>
+    <div class="actionbar" id="simBar">
+      <div class="status" id="simMsg"></div>
+      <div class="actions">
+        <button id="simCopy" class="secondary">📋 Salin ringkasan</button>
+        <button id="simShare">📤 Bagikan</button>
+      </div>
+    </div>
+  </section>
 
   <!-- video -->
   <section id="tab-video" hidden>
@@ -405,7 +594,7 @@ function haversine(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-function parseGPX(text) {
+function parseGPXRaw(text) {
   const xml = new DOMParser().parseFromString(text, 'application/xml');
   let pts = [...xml.getElementsByTagName('trkpt')];
   if (!pts.length) pts = [...xml.getElementsByTagName('rtept')];
@@ -419,7 +608,14 @@ function parseGPX(text) {
             ele ? +ele.textContent : 0, tm ? Date.parse(tm.textContent) : null,
             hr && +hr.textContent > 0 ? +hr.textContent : null];
   }).filter(c => isFinite(c[0]) && isFinite(c[1]));
+  const nameEl = xml.querySelector('trk > name') || xml.querySelector('metadata > name') || xml.querySelector('rte > name');
+  return { raw, name: nameEl ? nameEl.textContent.trim() : '' };
+}
+const parseGPX = text => { const r = parseGPXRaw(text); return buildTrack(r.raw, r.name); };
 
+// raw: [[lon, lat, ele, time|null, hr|null]] -> everything the video / stickers / simulation need
+function buildTrack(raw, name) {
+  if (!raw || raw.length < 2) throw new Error('Rute terlalu pendek.');
   // drop duplicate points (zero-length segments)
   const coords = [raw[0]];
   for (let i = 1; i < raw.length; i++) if (haversine(coords[coords.length-1], raw[i]) > 0.0005) coords.push(raw[i]);
@@ -458,9 +654,7 @@ function parseGPX(text) {
     const sm = raw.map((_, i) => { let a = 0, c = 0; for (let j = Math.max(0, i - 2); j <= Math.min(n, i + 2); j++) { a += raw[j]; c++; } return a / c; });
     profile = { e: sm, min: Math.min(...sm), max: Math.max(...coords.map(c => c[2])) };
   }
-  const nameEl = xml.querySelector('trk > name') || xml.querySelector('metadata > name') || xml.querySelector('rte > name');
-  const name = nameEl ? nameEl.textContent.trim() : '';
-  return { coords, cum, total, drawIdx, res, smooth: res, N, midLat, hasHr, name, gainCum, profile };
+  return { coords, cum, total, drawIdx, res, smooth: res, N, midLat, hasHr, name: name || '', gainCum, profile };
 }
 
 function movingAverage(arr, w) {
@@ -524,42 +718,104 @@ function trackBounds() {
   return b;
 }
 
-async function loadGpx(f) {
-  if (!f || running) return;
+// ---------- route intake: GPX / KML file or Google Maps link ----------
+const TABS = ['sim', 'video', 'stickers'];
+let currentTab = 'sim', pendingFit = false;
+
+function setIntakeBusy(on, msg) {
+  for (const id of ['gpx', 'gmLink', 'gmGo', 'cancelIntake', 'changeRoute']) $(id).disabled = on;
+  $('pickBtn').classList.toggle('disabled', on);
+  $('intakeProgress').hidden = !on;
+  if (on && msg) $('intakeProgress').textContent = msg;
+}
+function showIntake(on) {
+  $('drop').hidden = !on;
+  $('fileInfo').hidden = on || !track;
+  $('tabs').hidden = on || !track;
+  $('cancelIntake').hidden = !(on && track);
   $('uploadMsg').textContent = '';
-  try {
-    track = parseGPX(await f.text());
-  } catch (err) {
-    $('uploadMsg').textContent = 'Gagal membaca GPX: ' + err.message;
-    return;
-  }
-  // step 2: file summary + tabs
+  if (on) TABS.forEach(t => $('tab-' + t).hidden = true);
+  else if (track) showTab(currentTab);
+}
+$('changeRoute').onclick = () => showIntake(true);
+$('cancelIntake').onclick = () => showIntake(false);
+
+async function acceptRoute({ raw, name, label, source, noElevation, via }) {
+  const t = buildTrack(raw, name);
+  Object.assign(t, { source, noElevation: !!noElevation, via: via || null });
+  track = t;
   const a = activitySummary(track);
-  $('drop').hidden = true; $('fileInfo').hidden = false; $('tabs').hidden = false;
-  $('fiName').textContent = f.name;
+  $('fiName').textContent = label;
   $('fiStats').textContent = [`${track.total.toFixed(1)} km`, a.hasEle ? `↗ ${Math.round(a.gain)} m` : '', a.moving ? fmtDur(a.moving) : '',
     track.hasHr ? '❤ ada detak jantung' : ''].filter(Boolean).join(' · ');
   $('download').hidden = true;
-  showTab('video');
+  $('gmLink').value = '';
+  pendingFit = true;
+  showIntake(false);
+  showTab(track.coords[0][3] != null ? 'video' : 'sim');      // recorded rides -> video, planned routes -> simulation
   await ensureLayers();
-  map.fitBounds(trackBounds(), { padding: 40, pitch: 0, bearing: 0, duration: 1200, freezeElevation: true });
   $('preview').disabled = $('record').disabled = false;
   status('Siap. Tekan Preview untuk melihat, atau Buat Video.');
   renderHud(statAt(0));
   refreshStickers(true);
+  if (window.SimUI) SimUI.setTrack(track);
 }
-$('gpx').addEventListener('change', e => { loadGpx(e.target.files[0]); e.target.value = ''; });
+
+async function loadRouteFile(f) {
+  if (!f || running) return;
+  $('uploadMsg').textContent = '';
+  setIntakeBusy(true, 'Membaca file…');
+  try {
+    const buf = await f.arrayBuffer();
+    const head = new Uint8Array(buf.slice(0, 2));
+    if (head[0] === 0x50 && head[1] === 0x4b) throw new Error('File KMZ (zip) belum didukung. Di Google My Maps pilih "Download KML" dan centang "Export to a .KML file".');
+    const text = new TextDecoder().decode(buf);
+    const isKml = /\.kml$/i.test(f.name) || /<kml[\s>]/i.test(text.slice(0, 3000));
+    const parsed = isKml ? RouteImport.parseKML(text) : parseGPXRaw(text);
+    if (!isKml && parsed.raw.length < 2) throw new Error('Tidak ada titik rute di file ini.');
+    let raw = parsed.raw, noElevation = false;
+    if (!raw.some(p => p[2] !== 0)) {                          // no elevation in the file: take it from the map's terrain data
+      try { raw = await RouteImport.withElevation(raw, m => setIntakeBusy(true, m)); } catch { noElevation = true; }
+    }
+    await acceptRoute({ raw, name: parsed.name || f.name.replace(/\.[^.]+$/, ''), label: f.name, source: isKml ? 'kml' : 'gpx', noElevation });
+  } catch (err) {
+    $('uploadMsg').textContent = 'Gagal memuat rute: ' + err.message;
+  } finally { setIntakeBusy(false); }
+}
+
+async function loadFromLink() {
+  if (running) return;
+  const text = $('gmLink').value.trim();
+  $('uploadMsg').textContent = '';
+  if (!text) { $('uploadMsg').textContent = 'Tempel link rute Google Maps dulu.'; return; }
+  setIntakeBusy(true, 'Membuka link…');
+  try {
+    const r = await RouteImport.fromGoogleLink(text, { onStatus: m => setIntakeBusy(true, m) });
+    await acceptRoute({ raw: r.raw, name: r.name, label: r.name, source: 'link', noElevation: r.noElevation, via: r.via });
+  } catch (err) {
+    $('uploadMsg').textContent = err.message;
+  } finally { setIntakeBusy(false); }
+}
+
+$('gpx').addEventListener('change', e => { loadRouteFile(e.target.files[0]); e.target.value = ''; });
+$('gmGo').addEventListener('click', loadFromLink);
+$('gmLink').addEventListener('keydown', e => { if (e.key === 'Enter') loadFromLink(); });
+$('gmLink').addEventListener('paste', () => setTimeout(() => { if (RouteImport.extractUrl($('gmLink').value)) loadFromLink(); }, 60));
 const drop = $('drop');
 ['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
-drop.addEventListener('drop', e => loadGpx(e.dataTransfer.files[0]));
+drop.addEventListener('drop', e => loadRouteFile(e.dataTransfer.files[0]));
 
 // ---------- tabs ----------
 function showTab(name) {
+  currentTab = name;
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
-  $('tab-video').hidden = name !== 'video';
-  $('tab-stickers').hidden = name !== 'stickers';
-  if (name === 'video') { applyLayout(); renderHud(); }
+  TABS.forEach(t => $('tab-' + t).hidden = t !== name);
+  if (name === 'video') {
+    applyLayout(); renderHud();
+    if (pendingFit && track) { map.fitBounds(trackBounds(), { padding: 40, pitch: 0, bearing: 0, duration: 0, freezeElevation: true }); pendingFit = false; }
+  }
+  if (name === 'sim' && window.SimUI) SimUI.show();
 }
 document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 
@@ -1548,5 +1804,8 @@ loadFonts().then(() => { if (track) refreshStickers(); });
 renderHud(null);
 loadFonts().then(() => renderHud());
 </script>
+<script src="sim-core.js"></script>
+<script src="route-import.js"></script>
+<script src="sim-ui.js"></script>
 </body>
 </html>

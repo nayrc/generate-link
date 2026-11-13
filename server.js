@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { nanoid } = require('nanoid');
+const { resolveRedirects } = require('./resolve-link');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -108,6 +109,16 @@ app.delete('/api/links/:code', async (req, res) => {
   if (!await getLink(code)) return res.status(404).json({ error: 'Link tidak ditemukan' });
   await removeLink(code);
   res.json({ success: true });
+});
+
+// GET /api/resolve?url=... — expand a Google Maps short link (see resolve-link.js for the safety rules)
+app.get('/api/resolve', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    res.json({ url: await resolveRedirects(String(req.query.url || '')) });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'Link tidak bisa dibuka.' });
+  }
 });
 
 // GET /:code — redirect
